@@ -1,44 +1,52 @@
-# Design Guidelines for AKSHAY Display Page
+# Design Guidelines: Minimal Text Display
 
 ## Design Approach
-**Minimalist Typography-First Design** - This single-purpose page requires maximum typographic impact with restraint. Drawing inspiration from Apple's product launch pages and Linear's bold statement typography.
+
+**User Requirement:** Absolute minimalism - display only the text "akshay" with no design elements or styling.
+
+This is an intentionally anti-design request. Respect the user's explicit desire for simplicity.
 
 ## Core Design Elements
 
 ### Typography
-- **Primary Display**: Ultra-bold sans-serif (e.g., Inter Black, Poppins ExtraBold, or Montserrat Black) at 12-16rem (desktop), 6-8rem (tablet), 4-5rem (mobile)
-- **Letter Spacing**: Tight tracking (-0.02em to -0.05em) for modern, condensed feel
-- **Font Weight**: 800-900 for maximum presence
+- Font: System default (no custom fonts)
+- Size: Browser default (16px base)
+- Weight: Normal (400)
+- Text: "akshay" (lowercase as specified)
+- Alignment: Left-aligned, natural flow
 
 ### Layout System
-- **Tailwind Spacing**: Use units of 4, 8, and 12 (p-4, m-8, h-12)
-- **Viewport**: Full-height centered layout (min-h-screen)
-- **Positioning**: Perfect center alignment (flex items-center justify-center)
-- **Padding**: Minimal horizontal padding (px-4) for mobile edge protection
+- No container constraints
+- No centering
+- No padding/margin adjustments
+- Natural document flow
+- Text appears at top-left of viewport
 
-### Visual Treatment
-- **Text Rendering**: Crisp, anti-aliased rendering
-- **Hierarchy**: Single focal point - the name itself
-- **Breathing Room**: Generous whitespace on all sides
-- **Responsive Scaling**: Fluid typography that scales proportionally across breakpoints
+### Spacing
+- Use browser defaults only
+- No custom spacing units
+- No tailwind utility classes for layout
 
-### Component Structure
-**Single Element Page**:
-- Centered container spanning full viewport
-- AKSHAY text as the sole content element
-- No navigation, footer, or additional components
-- Clean, distraction-free presentation
+### Components
+- Single text element only
+- No navigation
+- No header/footer
+- No buttons
+- No images
+- No decorative elements
 
-### Animations
-None. Static presentation maintains focus and loads instantly.
+### Colors
+- Browser default text color (typically black)
+- Browser default background (typically white)
+- No custom color specifications
 
-### Images
-No images required. Pure typographic solution.
+## Implementation Notes
 
-### Accessibility
-- Semantic HTML with proper heading hierarchy (h1)
-- High contrast text treatment
-- Readable at all zoom levels
-- Clear focus states if interactive elements added later
+- Plain HTML with minimal structure
+- No CSS frameworks
+- No JavaScript
+- No animations
+- No responsive adjustments needed
+- Single `<body>` containing text node
 
-**Design Principle**: Maximum impact through typographic confidence. Let the name speak for itself with bold, unapologetic presentation that commands attention through scale and weight alone.
+**Critical:** This is a test of restraint. The user explicitly rejected design. Honor that request completely.

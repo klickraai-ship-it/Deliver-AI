@@ -11,11 +11,19 @@ build = ["npm", "run", "build"]
 run = ["npm", "run", "start"]
 
 [[ports]]
-localPort = 5000
+localPort = 3000
 externalPort = 80
 
 [[ports]]
-localPort = 44501
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 5000
+
+[[ports]]
+localPort = 39813
 externalPort = 3000
 
 [env]
@@ -39,5 +47,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
+args = "tsx watch --clear-screen=false server/index.ts"
 waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[agent]
+integrations = ["javascript_database:1.0.0"]
