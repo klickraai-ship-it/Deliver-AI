@@ -1,32 +1,206 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, boolean, jsonb, unique, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { z } from "zod";
 
-// Subscribers table
-export const subscribers = pgTable("subscribers", {
+// =============================================================================
+// FOUNDATION TABLES (users, sessions, settings)
+// =============================================================================
+
+// Users table
+export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
-  firstName: text("first_name"),
-  lastName: text("last_name"),
-  status: text("status").notNull().default('active'), // active, unsubscribed, bounced, complained
-  lists: text("lists").array().notNull().default(sql`ARRAY[]::text[]`), // Tags/lists the subscriber belongs to
-  metadata: jsonb("metadata").default(sql`'{}'::jsonb`), // Custom fields
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull(),
+  companyName: text("company_name"),
+  role: text("role").notNull().default('user'),
+  isVerified: boolean("is_verified").notNull().default(false),
+  twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
+  twoFactorSecret: text("two_factor_secret"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const subscribersRelations = relations(subscribers, ({ many }) => ({
-  campaignSubscribers: many(campaignSubscribers),
+export const insertUserSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  name: z.string().min(1),
+  companyName: z.string().optional(),
+  role: z.enum(['user', 'admin']).default('user'),
+});
+
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+
+// Sessions table
+export const sessions = pgTable("sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("sessions_user_id_idx").on(table.userId),
+  tokenIdx: index("sessions_token_idx").on(table.token),
+}));
+
+export type Session = typeof sessions.$inferSelect;
+
+// User Settings table
+export const userSettings = pgTable("user_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique().references(() => users.id, { onDelete: 'cascade' }),
+  timezone: text("timezone").notNull().default('UTC'),
+  language: text("language").notNull().default('en_US'),
+  theme: text("theme").notNull().default('dark'),
+  defaultUrlParams: text("default_url_params"),
+  testEmailPrefix: text("test_email_prefix").default('[Test]'),
+  rowsPerPage: integer("rows_per_page").notNull().default(200),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("user_settings_user_id_idx").on(table.userId),
+}));
+
+export const insertUserSettingsSchema = z.object({
+  userId: z.string(),
+  timezone: z.string().default('UTC'),
+  language: z.string().default('en_US'),
+  theme: z.enum(['light', 'dark']).default('dark'),
+  defaultUrlParams: z.string().optional(),
+  testEmailPrefix: z.string().default('[Test]'),
+  rowsPerPage: z.number().default(200),
+});
+
+export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;
+export type UserSettings = typeof userSettings.$inferSelect;
+
+// Settings table (global settings)
+export const settings = pgTable("settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSettingSchema = z.object({
+  key: z.string(),
+  value: z.any(),
+});
+
+export type InsertSetting = z.infer<typeof insertSettingSchema>;
+export type Setting = typeof settings.$inferSelect;
+
+// =============================================================================
+// TENANT-SCOPED DOMAIN TABLES (lists, blacklist, rules, subscribers, templates, campaigns)
+// =============================================================================
+
+// Lists table
+export const lists = pgTable("lists", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text("name").notNull(),
+  description: text("description"),
+  subscriberCount: integer("subscriber_count").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("lists_user_id_idx").on(table.userId),
+  uniqueUserIdName: unique("lists_user_id_name_unique").on(table.userId, table.name),
+}));
+
+export const insertListSchema = z.object({
+  userId: z.string(),
+  name: z.string().min(1),
+  description: z.string().optional(),
+});
+
+export type InsertList = z.infer<typeof insertListSchema>;
+export type List = typeof lists.$inferSelect;
+
+// Blacklist table
+export const blacklist = pgTable("blacklist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  email: text("email"),
+  domain: text("domain"),
+  reason: text("reason").notNull(),
+  blacklistedAt: timestamp("blacklisted_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("blacklist_user_id_idx").on(table.userId),
+}));
+
+export const insertBlacklistSchema = z.object({
+  userId: z.string(),
+  email: z.string().email().optional(),
+  domain: z.string().optional(),
+  reason: z.enum(['hard_bounce', 'complaint', 'manual', 'spam']),
+}).refine((data) => data.email || data.domain, {
+  message: "Either email or domain must be provided",
+});
+
+export type InsertBlacklist = z.infer<typeof insertBlacklistSchema>;
+export type Blacklist = typeof blacklist.$inferSelect;
+
+// Rules table
+export const rules = pgTable("rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text("name").notNull(),
+  triggerType: text("trigger_type").notNull(),
+  triggerConditions: jsonb("trigger_conditions").notNull().default(sql`'{}'::jsonb`),
+  actionType: text("action_type").notNull(),
+  actionData: jsonb("action_data").notNull().default(sql`'{}'::jsonb`),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("rules_user_id_idx").on(table.userId),
+}));
+
+export const insertRuleSchema = z.object({
+  userId: z.string(),
+  name: z.string().min(1),
+  triggerType: z.enum(['subscriber_created', 'email_opened', 'link_clicked', 'subscribed_to_list']),
+  triggerConditions: z.record(z.string(), z.any()).default({}),
+  actionType: z.enum(['add_to_list', 'remove_from_list', 'send_email', 'update_field']),
+  actionData: z.record(z.string(), z.any()).default({}),
+  isActive: z.boolean().default(true),
+});
+
+export type InsertRule = z.infer<typeof insertRuleSchema>;
+export type Rule = typeof rules.$inferSelect;
+
+// Subscribers table
+export const subscribers = pgTable("subscribers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  email: text("email").notNull(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  status: text("status").notNull().default('active'),
+  lists: text("lists").array().notNull().default(sql`ARRAY[]::text[]`),
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+  consentGiven: boolean("consent_given").notNull().default(false),
+  consentTimestamp: timestamp("consent_timestamp"),
+  gdprDataExportedAt: timestamp("gdpr_data_exported_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("subscribers_user_id_idx").on(table.userId),
+  uniqueUserIdEmail: unique("subscribers_user_id_email_unique").on(table.userId, table.email),
+  uniqueIdUserId: unique("subscribers_id_user_id_unique").on(table.id, table.userId),
 }));
 
 export const insertSubscriberSchema = z.object({
+  userId: z.string(),
   email: z.string().email(),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   status: z.enum(['active', 'unsubscribed', 'bounced', 'complained']).default('active'),
   lists: z.array(z.string()).default([]),
-  metadata: z.record(z.any()).default({}),
+  metadata: z.record(z.string(), z.any()).default({}),
+  consentGiven: z.boolean().default(false),
 });
 
 export type InsertSubscriber = z.infer<typeof insertSubscriberSchema>;
@@ -35,6 +209,7 @@ export type Subscriber = typeof subscribers.$inferSelect;
 // Email Templates table
 export const emailTemplates = pgTable("email_templates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text("name").notNull(),
   subject: text("subject").notNull(),
   htmlContent: text("html_content").notNull(),
@@ -42,13 +217,14 @@ export const emailTemplates = pgTable("email_templates", {
   thumbnailUrl: text("thumbnail_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-export const emailTemplatesRelations = relations(emailTemplates, ({ many }) => ({
-  campaigns: many(campaigns),
+}, (table) => ({
+  userIdIdx: index("email_templates_user_id_idx").on(table.userId),
+  uniqueUserIdName: unique("email_templates_user_id_name_unique").on(table.userId, table.name),
+  uniqueIdUserId: unique("email_templates_id_user_id_unique").on(table.id, table.userId),
 }));
 
 export const insertEmailTemplateSchema = z.object({
+  userId: z.string(),
   name: z.string(),
   subject: z.string(),
   htmlContent: z.string(),
@@ -62,30 +238,27 @@ export type EmailTemplate = typeof emailTemplates.$inferSelect;
 // Campaigns table
 export const campaigns = pgTable("campaigns", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text("name").notNull(),
   subject: text("subject").notNull(),
   templateId: varchar("template_id").references(() => emailTemplates.id),
-  status: text("status").notNull().default('draft'), // draft, scheduled, sending, sent, paused, failed
+  status: text("status").notNull().default('draft'),
   fromName: text("from_name").notNull(),
   fromEmail: text("from_email").notNull(),
   replyTo: text("reply_to"),
-  lists: text("lists").array().notNull().default(sql`ARRAY[]::text[]`), // Which subscriber lists to send to
+  lists: text("lists").array().notNull().default(sql`ARRAY[]::text[]`),
   scheduledAt: timestamp("scheduled_at"),
   sentAt: timestamp("sent_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
-  template: one(emailTemplates, {
-    fields: [campaigns.templateId],
-    references: [emailTemplates.id],
-  }),
-  campaignSubscribers: many(campaignSubscribers),
-  analytics: one(campaignAnalytics),
+}, (table) => ({
+  userIdIdx: index("campaigns_user_id_idx").on(table.userId),
+  templateIdIdx: index("campaigns_template_id_idx").on(table.templateId),
+  uniqueIdUserId: unique("campaigns_id_user_id_unique").on(table.id, table.userId),
 }));
 
 export const insertCampaignSchema = z.object({
+  userId: z.string(),
   name: z.string(),
   subject: z.string(),
   templateId: z.string().optional(),
@@ -101,19 +274,147 @@ export const insertCampaignSchema = z.object({
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
 export type Campaign = typeof campaigns.$inferSelect;
 
-// Campaign Subscribers (many-to-many join table)
+// =============================================================================
+// JOIN & ANALYTICS TABLES
+// =============================================================================
+
+// Campaign Subscribers (many-to-many join table) - with userId for tenant isolation
 export const campaignSubscribers = pgTable("campaign_subscribers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  campaignId: varchar("campaign_id").notNull().references(() => campaigns.id),
-  subscriberId: varchar("subscriber_id").notNull().references(() => subscribers.id),
-  status: text("status").notNull().default('pending'), // pending, sent, opened, clicked, bounced, complained, failed
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  campaignId: varchar("campaign_id").notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
+  subscriberId: varchar("subscriber_id").notNull().references(() => subscribers.id, { onDelete: 'cascade' }),
+  status: text("status").notNull().default('pending'),
   sentAt: timestamp("sent_at"),
   openedAt: timestamp("opened_at"),
   clickedAt: timestamp("clicked_at"),
   bouncedAt: timestamp("bounced_at"),
   complainedAt: timestamp("complained_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userIdIdx: index("campaign_subscribers_user_id_idx").on(table.userId),
+  campaignIdIdx: index("campaign_subscribers_campaign_id_idx").on(table.campaignId),
+  subscriberIdIdx: index("campaign_subscribers_subscriber_id_idx").on(table.subscriberId),
+}));
+
+export type CampaignSubscriber = typeof campaignSubscribers.$inferSelect;
+
+// Link Clicks tracking table - with userId for tenant isolation
+export const linkClicks = pgTable("link_clicks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  campaignId: varchar("campaign_id").notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
+  subscriberId: varchar("subscriber_id").notNull().references(() => subscribers.id, { onDelete: 'cascade' }),
+  url: text("url").notNull(),
+  clickedAt: timestamp("clicked_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("link_clicks_user_id_idx").on(table.userId),
+  campaignIdIdx: index("link_clicks_campaign_id_idx").on(table.campaignId),
+  subscriberIdIdx: index("link_clicks_subscriber_id_idx").on(table.subscriberId),
+}));
+
+export type LinkClick = typeof linkClicks.$inferSelect;
+
+// Campaign Analytics table - with userId for tenant isolation
+export const campaignAnalytics = pgTable("campaign_analytics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  campaignId: varchar("campaign_id").notNull().unique().references(() => campaigns.id, { onDelete: 'cascade' }),
+  totalSubscribers: integer("total_subscribers").notNull().default(0),
+  sent: integer("sent").notNull().default(0),
+  delivered: integer("delivered").notNull().default(0),
+  opened: integer("opened").notNull().default(0),
+  clicked: integer("clicked").notNull().default(0),
+  bounced: integer("bounced").notNull().default(0),
+  complained: integer("complained").notNull().default(0),
+  unsubscribed: integer("unsubscribed").notNull().default(0),
+  failed: integer("failed").notNull().default(0),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  userIdIdx: index("campaign_analytics_user_id_idx").on(table.userId),
+  campaignIdIdx: index("campaign_analytics_campaign_id_idx").on(table.campaignId),
+}));
+
+export type CampaignAnalytics = typeof campaignAnalytics.$inferSelect;
+
+// =============================================================================
+// RELATIONS (ALL DEFINED AT THE END)
+// =============================================================================
+
+export const usersRelations = relations(users, ({ one, many }) => ({
+  settings: one(userSettings),
+  sessions: many(sessions),
+  lists: many(lists),
+  blacklist: many(blacklist),
+  rules: many(rules),
+  subscribers: many(subscribers),
+  emailTemplates: many(emailTemplates),
+  campaigns: many(campaigns),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, {
+    fields: [sessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const userSettingsRelations = relations(userSettings, ({ one }) => ({
+  user: one(users, {
+    fields: [userSettings.userId],
+    references: [users.id],
+  }),
+}));
+
+export const listsRelations = relations(lists, ({ one }) => ({
+  user: one(users, {
+    fields: [lists.userId],
+    references: [users.id],
+  }),
+}));
+
+export const blacklistRelations = relations(blacklist, ({ one }) => ({
+  user: one(users, {
+    fields: [blacklist.userId],
+    references: [users.id],
+  }),
+}));
+
+export const rulesRelations = relations(rules, ({ one }) => ({
+  user: one(users, {
+    fields: [rules.userId],
+    references: [users.id],
+  }),
+}));
+
+export const subscribersRelations = relations(subscribers, ({ one, many }) => ({
+  user: one(users, {
+    fields: [subscribers.userId],
+    references: [users.id],
+  }),
+  campaignSubscribers: many(campaignSubscribers),
+}));
+
+export const emailTemplatesRelations = relations(emailTemplates, ({ one, many }) => ({
+  user: one(users, {
+    fields: [emailTemplates.userId],
+    references: [users.id],
+  }),
+  campaigns: many(campaigns),
+}));
+
+export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
+  user: one(users, {
+    fields: [campaigns.userId],
+    references: [users.id],
+  }),
+  template: one(emailTemplates, {
+    fields: [campaigns.templateId],
+    references: [emailTemplates.id],
+  }),
+  campaignSubscribers: many(campaignSubscribers),
+  analytics: one(campaignAnalytics),
+}));
 
 export const campaignSubscribersRelations = relations(campaignSubscribers, ({ one }) => ({
   campaign: one(campaigns, {
@@ -126,17 +427,6 @@ export const campaignSubscribersRelations = relations(campaignSubscribers, ({ on
   }),
 }));
 
-export type CampaignSubscriber = typeof campaignSubscribers.$inferSelect;
-
-// Link Clicks tracking table
-export const linkClicks = pgTable("link_clicks", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  campaignId: varchar("campaign_id").notNull().references(() => campaigns.id),
-  subscriberId: varchar("subscriber_id").notNull().references(() => subscribers.id),
-  url: text("url").notNull(), // Original URL that was clicked
-  clickedAt: timestamp("clicked_at").notNull().defaultNow(),
-});
-
 export const linkClicksRelations = relations(linkClicks, ({ one }) => ({
   campaign: one(campaigns, {
     fields: [linkClicks.campaignId],
@@ -148,45 +438,9 @@ export const linkClicksRelations = relations(linkClicks, ({ one }) => ({
   }),
 }));
 
-export type LinkClick = typeof linkClicks.$inferSelect;
-
-// Campaign Analytics table
-export const campaignAnalytics = pgTable("campaign_analytics", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  campaignId: varchar("campaign_id").notNull().unique().references(() => campaigns.id),
-  totalSubscribers: integer("total_subscribers").notNull().default(0),
-  sent: integer("sent").notNull().default(0),
-  delivered: integer("delivered").notNull().default(0),
-  opened: integer("opened").notNull().default(0),
-  clicked: integer("clicked").notNull().default(0),
-  bounced: integer("bounced").notNull().default(0),
-  complained: integer("complained").notNull().default(0),
-  unsubscribed: integer("unsubscribed").notNull().default(0),
-  failed: integer("failed").notNull().default(0),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
 export const campaignAnalyticsRelations = relations(campaignAnalytics, ({ one }) => ({
   campaign: one(campaigns, {
     fields: [campaignAnalytics.campaignId],
     references: [campaigns.id],
   }),
 }));
-
-export type CampaignAnalytics = typeof campaignAnalytics.$inferSelect;
-
-// Settings table
-export const settings = pgTable("settings", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  key: text("key").notNull().unique(),
-  value: jsonb("value").notNull(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-export const insertSettingSchema = z.object({
-  key: z.string(),
-  value: z.any(),
-});
-
-export type InsertSetting = z.infer<typeof insertSettingSchema>;
-export type Setting = typeof settings.$inferSelect;
