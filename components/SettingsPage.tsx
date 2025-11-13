@@ -114,8 +114,8 @@ const SettingsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-white">Email Integration Settings</h1>
-        <p className="text-gray-400 mt-1">Configure your AWS SES credentials for sending campaigns</p>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">Email Integration Settings</h1>
+        <p className="text-gray-400 mt-1.5">Configure your AWS SES credentials for sending campaigns</p>
       </div>
 
       {/* Current Status Banner */}
@@ -143,11 +143,14 @@ const SettingsPage: React.FC = () => {
       )}
 
       {/* AWS SES Configuration Form */}
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-        <div className="flex items-center mb-4">
-          <Shield className="h-5 w-5 text-brand-blue mr-2" />
-          <div>
-            <h2 className="text-lg font-semibold text-white">AWS SES Configuration</h2>
+      <div className="relative bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl border border-gray-700/50 p-6 shadow-xl overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-full blur-3xl"></div>
+        <div className="relative flex items-center mb-6">
+          <div className="p-3 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl shadow-lg shadow-blue-500/30">
+            <Shield className="h-6 w-6 text-white" />
+          </div>
+          <div className="ml-4">
+            <h2 className="text-lg font-semibold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">AWS SES Configuration</h2>
             <p className="text-sm text-gray-400">Only AWS SES is supported for multi-tenant email delivery</p>
           </div>
         </div>

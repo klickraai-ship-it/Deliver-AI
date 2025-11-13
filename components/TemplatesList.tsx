@@ -102,14 +102,14 @@ const TemplatesList: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Email Templates</h1>
-          <p className="text-gray-400 mt-1">Create and manage reusable email templates</p>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">Email Templates</h1>
+          <p className="text-gray-400 mt-1.5">Create and manage reusable email templates</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="flex items-center px-4 py-2 bg-brand-blue text-white rounded-lg hover:bg-brand-blue-light transition-colors"
+          className="flex items-center px-5 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl hover:from-blue-500 hover:to-purple-500 transition-all duration-200 shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 hover:scale-105"
         >
           <Plus className="h-5 w-5 mr-2" />
           Create Template
@@ -118,13 +118,13 @@ const TemplatesList: React.FC = () => {
 
       <div className="flex items-center gap-4">
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
             type="text"
             placeholder="Search templates..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-blue"
+            className="w-full pl-12 pr-4 py-3 bg-gray-800/50 border border-gray-700/50 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 hover:bg-gray-800/70"
           />
         </div>
       </div>
@@ -136,30 +136,33 @@ const TemplatesList: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredTemplates.map((template) => (
-            <div key={template.id} className="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-brand-blue transition-colors">
-              <div className="flex justify-between items-start mb-4">
+            <div key={template.id} className="group relative bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl border border-gray-700/50 p-6 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-300"></div>
+              <div className="relative flex justify-between items-start mb-4">
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-white mb-1">{template.name}</h3>
+                  <h3 className="text-lg font-semibold text-white mb-1.5 group-hover:text-blue-300 transition-colors">{template.name}</h3>
                   <p className="text-sm text-gray-400 truncate">{template.subject}</p>
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="relative flex gap-2">
                 <button
                   onClick={() => handlePreview(template)}
-                  className="flex-1 flex items-center justify-center px-3 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors text-sm"
+                  className="flex-1 flex items-center justify-center px-3 py-2.5 bg-gray-700/50 text-gray-300 rounded-xl hover:bg-blue-600 hover:text-white transition-all duration-200 text-sm font-medium"
                 >
-                  <Eye className="h-4 w-4 mr-1" />
+                  <Eye className="h-4 w-4 mr-1.5" />
                   Preview
                 </button>
                 <button
                   onClick={() => handleDuplicateTemplate(template.id)}
-                  className="px-3 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+                  className="px-3 py-2.5 bg-gray-700/50 text-gray-300 rounded-xl hover:bg-green-600 hover:text-white transition-all duration-200"
+                  title="Duplicate"
                 >
                   <Copy className="h-4 w-4" />
                 </button>
                 <button
                   onClick={() => handleDeleteTemplate(template.id)}
-                  className="px-3 py-2 bg-red-900 text-red-200 rounded-lg hover:bg-red-800 transition-colors"
+                  className="px-3 py-2.5 bg-red-500/10 text-red-400 rounded-xl hover:bg-red-600 hover:text-white transition-all duration-200"
+                  title="Delete"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

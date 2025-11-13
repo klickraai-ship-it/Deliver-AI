@@ -19,15 +19,20 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate }) => {
   ];
 
   return (
-    <aside className="hidden md:flex flex-col w-64 bg-gray-800 border-r border-gray-700">
-      <div className="flex items-center justify-center h-16 border-b border-gray-700">
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-brand-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M22 12h-6l-2 3h-4l-2-3H2"/>
-            <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
-        </svg>
-        <h1 className="text-xl font-bold ml-2 text-white">DeliverAI</h1>
+    <aside className="hidden md:flex flex-col w-64 bg-gradient-to-b from-gray-800 to-gray-900 border-r border-gray-700/50 backdrop-blur-xl shadow-2xl">
+      <div className="flex items-center justify-center h-20 border-b border-gray-700/50 px-6">
+        <div className="flex items-center space-x-3">
+          <div className="relative">
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl blur-md opacity-75"></div>
+            <svg xmlns="http://www.w3.org/2000/svg" className="relative h-9 w-9 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 12h-6l-2 3h-4l-2-3H2"/>
+              <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">DeliverAI</h1>
+        </div>
       </div>
-      <nav className="flex-1 p-4 space-y-2">
+      <nav className="flex-1 p-4 space-y-1.5">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = currentPage === item.page;
@@ -35,21 +40,21 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate }) => {
             <button
               key={item.label}
               onClick={() => onNavigate(item.page)}
-              className={`w-full flex items-center px-4 py-2.5 rounded-md text-sm font-medium transition-colors duration-200 ${
+              className={`group w-full flex items-center px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
                 isActive
-                  ? 'bg-brand-blue text-white shadow-lg'
-                  : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                  ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/30'
+                  : 'text-gray-400 hover:bg-gray-700/50 hover:text-white hover:scale-[1.02]'
               }`}
             >
-              <Icon className="h-5 w-5 mr-3" />
+              <Icon className={`h-5 w-5 mr-3 transition-transform duration-200 ${isActive ? '' : 'group-hover:scale-110'}`} />
               {item.label}
             </button>
           );
         })}
       </nav>
-      <div className="p-4 border-t border-gray-700">
-         <a href="#" className="flex items-center px-4 py-2.5 rounded-md text-sm font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition-colors duration-200">
-             <LifeBuoy className="h-5 w-5 mr-3" />
+      <div className="p-4 border-t border-gray-700/50">
+         <a href="#" className="group flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-700/50 hover:text-white transition-all duration-200 hover:scale-[1.02]">
+             <LifeBuoy className="h-5 w-5 mr-3 group-hover:scale-110 transition-transform duration-200" />
              Support
          </a>
       </div>
