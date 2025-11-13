@@ -51,7 +51,7 @@ const TemplatesList: React.FC = () => {
       const templateData = {
         name: newTemplate.name.trim(),
         subject: newTemplate.subject.trim(),
-        htmlContent: newTemplate.htmlContent,
+        htmlContent: newTemplate.htmlContent, // Already email-safe from editor
         textContent: newTemplate.textContent || ''
       };
 
@@ -91,7 +91,7 @@ const TemplatesList: React.FC = () => {
       const templateData = {
         name: editingTemplate.name.trim(),
         subject: editingTemplate.subject.trim(),
-        htmlContent: editingTemplate.htmlContent,
+        htmlContent: editingTemplate.htmlContent, // Already email-safe from editor
         textContent: editingTemplate.textContent || ''
       };
 

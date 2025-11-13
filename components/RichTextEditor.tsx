@@ -133,9 +133,8 @@ const RichTextEditor: React.FC<RichTextEditorProps> = ({
     ],
     content,
     onUpdate: ({ editor }) => {
-      const rawHtml = editor.getHTML();
-      const emailSafeHtml = convertToEmailSafeHtml(rawHtml);
-      onChange(emailSafeHtml);
+      // Pass raw HTML during editing for better editor experience
+      onChange(editor.getHTML());
     },
     editorProps: {
       attributes: {
