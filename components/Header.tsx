@@ -1,13 +1,12 @@
 import React from 'react';
 import { Bell, Search, LogOut } from 'lucide-react';
 
-const Header: React.FC = () => {
-  // Placeholder for user data and logout function. In a real app, these would come from an auth context.
-  const user = { name: 'Admin User', email: 'admin@brand.com' }; 
-  const onLogout = () => { 
-    console.log("Logging out..."); 
-    // In a real app, you would clear tokens and redirect to login
-  };
+interface HeaderProps {
+  user: { name: string; email: string } | null;
+  onLogout: () => void;
+}
+
+const Header: React.FC<HeaderProps> = ({ user, onLogout }) => {
 
   return (
     <header className="flex items-center justify-between h-16 bg-gray-800 border-b border-gray-700 px-4 sm:px-6 lg:px-8">

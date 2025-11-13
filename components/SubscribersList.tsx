@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Trash2, Edit, Mail, UserX, UserCheck } from 'lucide-react';
+import { api } from '../client/src/lib/api';
 
 interface Subscriber {
   id: string;
@@ -24,10 +25,7 @@ const SubscribersList: React.FC = () => {
 
   const fetchSubscribers = async () => {
     try {
-      const response = await fetch('/api/subscribers');
-      const data = await response.json();
-
-      // Handle error responses or non-array data
+      const data = await api.get('/api/subscribers');
       if (Array.isArray(data)) {
         setSubscribers(data);
       } else {
@@ -44,20 +42,13 @@ const SubscribersList: React.FC = () => {
 
   const handleAddSubscriber = async () => {
     try {
-      const response = await fetch('/api/subscribers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newSubscriber,
-          lists: newSubscriber.lists.split(',').map(l => l.trim()).filter(Boolean)
-        })
+      await api.post('/api/subscribers', {
+        ...newSubscriber,
+        lists: newSubscriber.lists.split(',').map(l => l.trim()).filter(Boolean)
       });
-
-      if (response.ok) {
-        setShowAddModal(false);
-        setNewSubscriber({ email: '', firstName: '', lastName: '', lists: '' });
-        fetchSubscribers();
-      }
+      setShowAddModal(false);
+      setNewSubscriber({ email: '', firstName: '', lastName: '', lists: '' });
+      fetchSubscribers();
     } catch (error) {
       console.error('Error adding subscriber:', error);
     }
@@ -67,10 +58,7 @@ const SubscribersList: React.FC = () => {
     if (!confirm('Are you sure you want to delete this subscriber?')) return;
 
     try {
-      await fetch(`/api/subscribers/${id}`, { 
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      });
+      await api.delete(`/api/subscribers/${id}`);
       fetchSubscribers();
     } catch (error) {
       console.error('Error deleting subscriber:', error);

@@ -8,6 +8,7 @@ import TemplatesList from './components/TemplatesList';
 import CampaignsList from './components/CampaignsList';
 import SettingsPage from './components/SettingsPage';
 import LoginPage from './components/LoginPage';
+import { api } from './client/src/lib/api';
 
 // Mock data generation
 const generateMockData = (): DashboardData => ({
@@ -55,22 +56,14 @@ const App: React.FC = () => {
     }
 
     try {
-      const response = await fetch('/api/auth/me', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-        setIsAuthenticated(true);
-        fetchDashboardData(token);
-      } else {
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('user');
-        setLoading(false);
-      }
+      const userData = await api.get('/api/auth/me');
+      setUser(userData);
+      setIsAuthenticated(true);
+      fetchDashboardData();
     } catch (error) {
       console.error('Auth check failed:', error);
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('user');
       setLoading(false);
     }
   };
@@ -80,7 +73,7 @@ const App: React.FC = () => {
     localStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
     setIsAuthenticated(true);
-    fetchDashboardData(token);
+    fetchDashboardData();
   };
 
   const handleLogout = () => {
@@ -92,94 +85,25 @@ const App: React.FC = () => {
     setCurrentPage('dashboard'); // Reset to dashboard after logout
   };
 
-  const fetchDashboardData = async (token?: string) => {
-    const authToken = token || localStorage.getItem('authToken');
+  const fetchDashboardData = async () => {
+    const authToken = localStorage.getItem('authToken');
     if (!authToken) {
         setLoading(false);
         return;
     }
 
-    setLoading(true); // Ensure loading is true when fetching
+    setLoading(true);
     try {
-      const response = await fetch('/api/dashboard', {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
-      if (!response.ok) {
-        console.warn('Dashboard API returned error:', response.status);
-        if (response.status === 401) {
-            handleLogout(); // Log out if unauthorized
-            return;
-        }
-        setData(generateMockData()); // Use mock data on error if not 401
-        return;
-      }
-      const dashboardData = await response.json();
+      const dashboardData = await api.get('/api/dashboard');
       setData(dashboardData);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      setData(generateMockData()); // Use mock data on catch
+      setData(generateMockData());
     } finally {
       setLoading(false);
     }
   };
 
-  // Handle fetching data for other pages if needed, passing the token
-  const fetchCampaignsData = async () => {
-    const token = localStorage.getItem('authToken');
-    if (!token) return null;
-    try {
-      const response = await fetch('/api/campaigns', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!response.ok) {
-        console.error('Failed to fetch campaigns data');
-        if (response.status === 401) handleLogout();
-        return null;
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching campaigns data:', error);
-      return null;
-    }
-  };
-
-  const fetchTemplatesData = async () => {
-    const token = localStorage.getItem('authToken');
-    if (!token) return null;
-    try {
-      const response = await fetch('/api/templates', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!response.ok) {
-        console.error('Failed to fetch templates data');
-        if (response.status === 401) handleLogout();
-        return null;
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching templates data:', error);
-      return null;
-    }
-  };
-
-  const fetchSubscribersData = async () => {
-    const token = localStorage.getItem('authToken');
-    if (!token) return null;
-    try {
-      const response = await fetch('/api/subscribers', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!response.ok) {
-        console.error('Failed to fetch subscribers data');
-        if (response.status === 401) handleLogout();
-        return null;
-      }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching subscribers data:', error);
-      return null;
-    }
-  };
 
 
   const renderPage = () => {

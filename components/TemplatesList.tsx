@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Search, Trash2, Edit, Copy, Eye, Code, FileText } from 'lucide-react';
-import { AuthContext, AuthProvider } from './AuthContext'; // Assuming AuthContext is in './AuthContext'
-import LoginPage from './LoginPage'; // Assuming LoginPage is in './LoginPage'
+import { api } from '../client/src/lib/api';
 
 interface EmailTemplate {
   id: string;
@@ -26,38 +25,15 @@ const TemplatesList: React.FC = () => {
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<EmailTemplate | null>(null);
   const [newTemplate, setNewTemplate] = useState({ name: '', subject: '', htmlContent: '', textContent: '' });
-  const { isAuthenticated, token } = useContext(AuthContext);
-
-  const getAuthHeaders = () => {
-    if (!token) return {};
-    return {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-  };
 
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchTemplates();
-    } else {
-      setLoading(false);
-      setTemplates([]);
-    }
-  }, [isAuthenticated, token]); // Re-fetch when auth state or token changes
+    fetchTemplates();
+  }, []);
 
   const fetchTemplates = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/templates', { headers: getAuthHeaders() });
-      if (!response.ok) {
-        if (response.status === 401) {
-          // Handle unauthorized access, e.g., redirect to login
-          console.error("Unauthorized access to /api/templates");
-          return;
-        }
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
+      const data = await api.get('/api/templates');
       setTemplates(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Error fetching templates:', error);
@@ -69,19 +45,10 @@ const TemplatesList: React.FC = () => {
 
   const handleAddTemplate = async () => {
     try {
-      const response = await fetch('/api/templates', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(newTemplate)
-      });
-
-      if (response.ok) {
-        setShowAddModal(false);
-        setNewTemplate({ name: '', subject: '', htmlContent: '', textContent: '' });
-        fetchTemplates();
-      } else {
-        console.error('Error adding template:', response.statusText);
-      }
+      await api.post('/api/templates', newTemplate);
+      setShowAddModal(false);
+      setNewTemplate({ name: '', subject: '', htmlContent: '', textContent: '' });
+      fetchTemplates();
     } catch (error) {
       console.error('Error adding template:', error);
     }
@@ -91,15 +58,8 @@ const TemplatesList: React.FC = () => {
     if (!confirm('Are you sure you want to delete this template?')) return;
 
     try {
-      const response = await fetch(`/api/templates/${id}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        fetchTemplates();
-      } else {
-        console.error('Error deleting template:', response.statusText);
-      }
+      await api.delete(`/api/templates/${id}`);
+      fetchTemplates();
     } catch (error) {
       console.error('Error deleting template:', error);
     }
@@ -107,15 +67,8 @@ const TemplatesList: React.FC = () => {
 
   const handleDuplicateTemplate = async (id: string) => {
     try {
-      const response = await fetch(`/api/templates/${id}/duplicate`, {
-        method: 'POST',
-        headers: getAuthHeaders()
-      });
-      if (response.ok) {
-        fetchTemplates();
-      } else {
-        console.error('Error duplicating template:', response.statusText);
-      }
+      await api.post(`/api/templates/${id}/duplicate`);
+      fetchTemplates();
     } catch (error) {
       console.error('Error duplicating template:', error);
     }
@@ -146,10 +99,6 @@ const TemplatesList: React.FC = () => {
     template.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     template.subject.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
 
   return (
     <div className="space-y-6">
@@ -334,111 +283,4 @@ const TemplatesList: React.FC = () => {
   );
 };
 
-const App = () => {
-  return (
-    <AuthProvider>
-      <div className="min-h-screen bg-gray-900 text-white p-8">
-        <Header />
-        <TemplatesList />
-      </div>
-    </AuthProvider>
-  );
-};
-
-const Header = () => {
-  const { isAuthenticated, logout } = useContext(AuthContext);
-
-  return (
-    <header className="flex justify-between items-center mb-8">
-      <h1 className="text-3xl font-bold">Campaign Manager</h1>
-      {isAuthenticated && (
-        <button onClick={logout} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
-          Logout
-        </button>
-      )}
-    </header>
-  );
-};
-
-// Placeholder for LoginPage component
-// In a real app, this would be a separate file (e.g., LoginPage.tsx)
-const LoginPage: React.FC = () => {
-  const { login } = useContext(AuthContext);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-
-  const handleLogin = () => {
-    login(username, password); // In a real app, validate credentials here
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-100px)]">
-      <h2 className="text-2xl font-bold mb-4">Login</h2>
-      <div className="space-y-3 w-64">
-        <input
-          type="text"
-          placeholder="Username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-        />
-        <button
-          onClick={handleLogin}
-          className="w-full px-4 py-2 bg-brand-blue text-white rounded-lg hover:bg-brand-blue-light transition-colors"
-        >
-          Login
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// Placeholder for AuthContext and AuthProvider
-// In a real app, these would be in a separate file (e.g., AuthContext.tsx)
-interface AuthContextType {
-  token: string | null;
-  isAuthenticated: boolean;
-  login: (username: string, password: string) => void;
-  logout: () => void;
-}
-
-export const AuthContext = React.createContext<AuthContextType>({
-  token: null,
-  isAuthenticated: false,
-  login: () => {},
-  logout: () => {},
-});
-
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('authToken'));
-
-  const login = (username?: string, password?: string) => {
-    // In a real app, this would involve an API call to get a token
-    // For demonstration, we'll use a dummy token
-    const dummyToken = 'dummy-auth-token-12345';
-    setToken(dummyToken);
-    localStorage.setItem('authToken', dummyToken);
-  };
-
-  const logout = () => {
-    setToken(null);
-    localStorage.removeItem('authToken');
-  };
-
-  const isAuthenticated = !!token;
-
-  return (
-    <AuthContext.Provider value={{ token, isAuthenticated, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
-export default App;
+export default TemplatesList;

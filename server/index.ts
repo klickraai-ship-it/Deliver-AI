@@ -1,8 +1,41 @@
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { enforceEnvironment } from "./envValidator";
+import { runMigrations } from "./migrations";
 
 const app = express();
+
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
+if (!isDevelopment) {
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"],
+      },
+    },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    frameguard: {
+      action: 'deny',
+    },
+    noSniff: true,
+    xssFilter: true,
+  }));
+}
 
 declare module 'http' {
   interface IncomingMessage {
@@ -47,6 +80,9 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  enforceEnvironment();
+  await runMigrations();
+  
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Save, Key, AlertCircle, CheckCircle, Shield, Mail } from 'lucide-react';
+import { api } from '../client/src/lib/api';
 
 interface EmailProviderConfig {
   provider: 'ses' | null;
@@ -28,20 +29,12 @@ const SettingsPage: React.FC = () => {
   const fetchEmailProvider = async () => {
     setFetching(true);
     try {
-      const response = await fetch('/api/settings/email-provider', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      const data = await api.get('/api/settings/email-provider');
+      setCurrentProvider(data);
       
-      if (response.ok) {
-        const data = await response.json();
-        setCurrentProvider(data);
-        
-        if (data && data.config) {
-          setAwsRegion(data.config.awsRegion || 'us-east-1');
-          setIsActive(data.isActive ?? true);
-        }
+      if (data && data.config) {
+        setAwsRegion(data.config.awsRegion || 'us-east-1');
+        setIsActive(data.isActive ?? true);
       }
     } catch (error) {
       console.error('Error fetching email provider:', error);
@@ -55,13 +48,10 @@ const SettingsPage: React.FC = () => {
     setSaveStatus(null);
     
     try {
-      // Build config object - only include keys if they're provided
-      // This allows users to update region/active status without re-entering credentials
       const config: any = {
         awsRegion
       };
       
-      // Only include keys if they're provided (required for new, optional for updates)
       if (awsAccessKeyId) {
         config.awsAccessKeyId = awsAccessKeyId;
       }
@@ -69,33 +59,20 @@ const SettingsPage: React.FC = () => {
         config.awsSecretAccessKey = awsSecretAccessKey;
       }
       
-      const response = await fetch('/api/settings/email-provider', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          provider: 'ses',
-          isActive,
-          config
-        })
+      const data = await api.post('/api/settings/email-provider', {
+        provider: 'ses',
+        isActive,
+        config
       });
       
-      const data = await response.json();
-      
-      if (response.ok) {
-        setSaveStatus({ type: 'success', message: data.message || 'Email provider configured successfully!' });
-        setAwsAccessKeyId('');
-        setAwsSecretAccessKey('');
-        await fetchEmailProvider();
-        setTimeout(() => setSaveStatus(null), 5000);
-      } else {
-        setSaveStatus({ type: 'error', message: data.message || 'Failed to save configuration' });
-      }
-    } catch (error) {
+      setSaveStatus({ type: 'success', message: data.message || 'Email provider configured successfully!' });
+      setAwsAccessKeyId('');
+      setAwsSecretAccessKey('');
+      await fetchEmailProvider();
+      setTimeout(() => setSaveStatus(null), 5000);
+    } catch (error: any) {
       console.error('Error saving configuration:', error);
-      setSaveStatus({ type: 'error', message: 'Network error. Please try again.' });
+      setSaveStatus({ type: 'error', message: error.message || 'Network error. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -110,28 +87,17 @@ const SettingsPage: React.FC = () => {
     setSaveStatus(null);
     
     try {
-      const response = await fetch('/api/settings/email-provider', {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        setSaveStatus({ type: 'success', message: 'Email provider configuration deleted successfully.' });
-        setCurrentProvider(null);
-        setAwsAccessKeyId('');
-        setAwsSecretAccessKey('');
-        setAwsRegion('us-east-1');
-        setIsActive(true);
-        setTimeout(() => setSaveStatus(null), 5000);
-      } else {
-        const data = await response.json();
-        setSaveStatus({ type: 'error', message: data.message || 'Failed to delete configuration' });
-      }
-    } catch (error) {
+      await api.delete('/api/settings/email-provider');
+      setSaveStatus({ type: 'success', message: 'Email provider configuration deleted successfully.' });
+      setCurrentProvider(null);
+      setAwsAccessKeyId('');
+      setAwsSecretAccessKey('');
+      setAwsRegion('us-east-1');
+      setIsActive(true);
+      setTimeout(() => setSaveStatus(null), 5000);
+    } catch (error: any) {
       console.error('Error deleting configuration:', error);
-      setSaveStatus({ type: 'error', message: 'Network error. Please try again.' });
+      setSaveStatus({ type: 'error', message: error.message || 'Network error. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -326,191 +292,6 @@ const SettingsPage: React.FC = () => {
         >
           <Save className="h-5 w-5 mr-2" />
           {loading ? 'Saving...' : currentProvider ? 'Update Configuration' : 'Save Configuration'}
-        </button>
-      </div>
-    </div>
-  );
-};
-
-export default SettingsPage;
-import React, { useState } from 'react';
-import { Save, Mail, Shield, Bell, Database } from 'lucide-react';
-
-const SettingsPage: React.FC = () => {
-  const [settings, setSettings] = useState({
-    smtpHost: '',
-    smtpPort: '587',
-    smtpUser: '',
-    smtpPassword: '',
-    fromEmail: '',
-    fromName: '',
-    replyToEmail: '',
-    notifications: true,
-    trackOpens: true,
-    trackClicks: true,
-  });
-
-  const handleSave = async () => {
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
-      });
-      
-      if (response.ok) {
-        alert('Settings saved successfully!');
-      } else {
-        alert('Failed to save settings');
-      }
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      alert('Error saving settings');
-    }
-  };
-
-  return (
-    <div className="space-y-6 max-w-4xl">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-gray-400 mt-1">Configure your email delivery platform</p>
-      </div>
-
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-        <div className="flex items-center mb-4">
-          <Mail className="h-6 w-6 text-brand-blue mr-3" />
-          <h2 className="text-xl font-semibold text-white">SMTP Configuration</h2>
-        </div>
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">SMTP Host</label>
-              <input
-                type="text"
-                value={settings.smtpHost}
-                onChange={(e) => setSettings({ ...settings, smtpHost: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-                placeholder="smtp.example.com"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">SMTP Port</label>
-              <input
-                type="text"
-                value={settings.smtpPort}
-                onChange={(e) => setSettings({ ...settings, smtpPort: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-                placeholder="587"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">SMTP Username</label>
-            <input
-              type="text"
-              value={settings.smtpUser}
-              onChange={(e) => setSettings({ ...settings, smtpUser: e.target.value })}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-              placeholder="username"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">SMTP Password</label>
-            <input
-              type="password"
-              value={settings.smtpPassword}
-              onChange={(e) => setSettings({ ...settings, smtpPassword: e.target.value })}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-              placeholder="••••••••"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-        <div className="flex items-center mb-4">
-          <Shield className="h-6 w-6 text-brand-blue mr-3" />
-          <h2 className="text-xl font-semibold text-white">Sender Information</h2>
-        </div>
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">From Email</label>
-              <input
-                type="email"
-                value={settings.fromEmail}
-                onChange={(e) => setSettings({ ...settings, fromEmail: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-                placeholder="noreply@example.com"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">From Name</label>
-              <input
-                type="text"
-                value={settings.fromName}
-                onChange={(e) => setSettings({ ...settings, fromName: e.target.value })}
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-                placeholder="My Company"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Reply-To Email</label>
-            <input
-              type="email"
-              value={settings.replyToEmail}
-              onChange={(e) => setSettings({ ...settings, replyToEmail: e.target.value })}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue"
-              placeholder="support@example.com"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
-        <div className="flex items-center mb-4">
-          <Bell className="h-6 w-6 text-brand-blue mr-3" />
-          <h2 className="text-xl font-semibold text-white">Tracking & Notifications</h2>
-        </div>
-        <div className="space-y-4">
-          <label className="flex items-center">
-            <input
-              type="checkbox"
-              checked={settings.notifications}
-              onChange={(e) => setSettings({ ...settings, notifications: e.target.checked })}
-              className="w-4 h-4 text-brand-blue bg-gray-700 border-gray-600 rounded focus:ring-brand-blue"
-            />
-            <span className="ml-2 text-sm text-gray-300">Enable email notifications</span>
-          </label>
-          <label className="flex items-center">
-            <input
-              type="checkbox"
-              checked={settings.trackOpens}
-              onChange={(e) => setSettings({ ...settings, trackOpens: e.target.checked })}
-              className="w-4 h-4 text-brand-blue bg-gray-700 border-gray-600 rounded focus:ring-brand-blue"
-            />
-            <span className="ml-2 text-sm text-gray-300">Track email opens</span>
-          </label>
-          <label className="flex items-center">
-            <input
-              type="checkbox"
-              checked={settings.trackClicks}
-              onChange={(e) => setSettings({ ...settings, trackClicks: e.target.checked })}
-              className="w-4 h-4 text-brand-blue bg-gray-700 border-gray-600 rounded focus:ring-brand-blue"
-            />
-            <span className="ml-2 text-sm text-gray-300">Track link clicks</span>
-          </label>
-        </div>
-      </div>
-
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          className="flex items-center px-6 py-2 bg-brand-blue text-white rounded-lg hover:bg-brand-blue-light transition-colors"
-        >
-          <Save className="h-5 w-5 mr-2" />
-          Save Settings
         </button>
       </div>
     </div>

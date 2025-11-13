@@ -29,6 +29,8 @@ import bcrypt from "bcryptjs";
 import { randomBytes } from "crypto";
 import { subscribeRateLimiter, unsubscribeRateLimiter, publicEndpointLimiter } from "./rateLimiter";
 import { emailService } from "./emailProvider";
+import { encryptObject, decryptObject } from "./encryption";
+import { sanitizeEmailHtml, sanitizeEmailText, sanitizeSubject } from "./sanitizer";
 
 // Middleware to validate session and extract userId
 async function requireAuth(req: any, res: any, next: any) {
@@ -412,10 +414,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = (req as any).userId;
       const validatedData = insertEmailTemplateSchema.parse(req.body);
       
+      // Sanitize HTML content to prevent XSS attacks
+      const sanitizedData = {
+        ...validatedData,
+        subject: sanitizeSubject(validatedData.subject),
+        htmlContent: sanitizeEmailHtml(validatedData.htmlContent),
+        textContent: validatedData.textContent ? sanitizeEmailText(validatedData.textContent) : undefined,
+      };
+      
       const [newTemplate] = await db
         .insert(emailTemplates)
         .values({
-          ...validatedData,
+          ...sanitizedData,
           userId,
         })
         .returning();
@@ -434,9 +444,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Filter out protected/system fields to prevent userId reassignment and tenant breakout
       const { userId: _, id: __, createdAt: ___, updatedAt: ____, ...allowedUpdates } = req.body;
       
+      // Sanitize HTML content to prevent XSS attacks
+      const sanitizedUpdates: any = { ...allowedUpdates };
+      if (sanitizedUpdates.subject) {
+        sanitizedUpdates.subject = sanitizeSubject(sanitizedUpdates.subject);
+      }
+      if (sanitizedUpdates.htmlContent) {
+        sanitizedUpdates.htmlContent = sanitizeEmailHtml(sanitizedUpdates.htmlContent);
+      }
+      if (sanitizedUpdates.textContent) {
+        sanitizedUpdates.textContent = sanitizeEmailText(sanitizedUpdates.textContent);
+      }
+      
       const [updated] = await db
         .update(emailTemplates)
-        .set(allowedUpdates)
+        .set(sanitizedUpdates)
         .where(and(
           eq(emailTemplates.id, req.params.id),
           eq(emailTemplates.userId, userId)
@@ -1612,14 +1634,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Don't send sensitive credentials to frontend
+      // Decrypt credentials from database
       const config = integration.config as any;
+      const decryptedConfig = decryptObject(config);
+      
+      // Don't send sensitive credentials to frontend
       const safeConfig = {
-        ...config,
-        awsSecretAccessKey: config.awsSecretAccessKey ? '***HIDDEN***' : undefined,
-        apiKey: config.apiKey ? '***HIDDEN***' : undefined,
-        sendgridApiKey: config.sendgridApiKey ? '***HIDDEN***' : undefined,
-        mailgunApiKey: config.mailgunApiKey ? '***HIDDEN***' : undefined,
+        ...decryptedConfig,
+        awsSecretAccessKey: decryptedConfig.awsSecretAccessKey ? '***HIDDEN***' : undefined,
+        apiKey: decryptedConfig.apiKey ? '***HIDDEN***' : undefined,
+        sendgridApiKey: decryptedConfig.sendgridApiKey ? '***HIDDEN***' : undefined,
+        mailgunApiKey: decryptedConfig.mailgunApiKey ? '***HIDDEN***' : undefined,
       };
       
       res.json({
@@ -1676,18 +1701,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingConfig = existing.config as any || {};
         const newConfig = validatedData.config as any || {};
         
+        // Decrypt existing config to merge with new values
+        const decryptedExisting = decryptObject(existingConfig);
+        
         const mergedConfig = {
-          awsAccessKeyId: newConfig.awsAccessKeyId || existingConfig.awsAccessKeyId,
-          awsSecretAccessKey: newConfig.awsSecretAccessKey || existingConfig.awsSecretAccessKey,
-          awsRegion: newConfig.awsRegion || existingConfig.awsRegion,
+          awsAccessKeyId: newConfig.awsAccessKeyId || decryptedExisting.awsAccessKeyId,
+          awsSecretAccessKey: newConfig.awsSecretAccessKey || decryptedExisting.awsSecretAccessKey,
+          awsRegion: newConfig.awsRegion || decryptedExisting.awsRegion,
         };
+        
+        // Encrypt the merged config before saving
+        const encryptedConfig = encryptObject(mergedConfig);
         
         const [updated] = await db
           .update(emailProviderIntegrations)
           .set({
             provider: validatedData.provider,
             isActive: validatedData.isActive,
-            config: mergedConfig as any,
+            config: encryptedConfig as any,
             updatedAt: new Date(),
           })
           .where(eq(emailProviderIntegrations.userId, userId))
@@ -1696,13 +1727,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.json({ message: "Integration updated successfully", integration: updated });
       } else {
         // Create new integration
+        // Encrypt credentials before saving
+        const encryptedConfig = encryptObject(validatedData.config as any);
+        
         const [created] = await db
           .insert(emailProviderIntegrations)
           .values({
             userId,
             provider: validatedData.provider,
             isActive: validatedData.isActive,
-            config: validatedData.config as any,
+            config: encryptedConfig as any,
           })
           .returning();
         

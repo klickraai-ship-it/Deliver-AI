@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Trash2, Send, Calendar, Eye, BarChart3, MousePointerClick, Mail, UserX, Monitor } from 'lucide-react';
+import { api } from '../client/src/lib/api';
 
 interface Campaign {
   id: string;
@@ -59,26 +60,9 @@ const CampaignsList: React.FC = () => {
     fetchTemplates();
   }, []);
 
-  const getAuthHeaders = () => {
-    const token = localStorage.getItem('authToken');
-    return token ? { 'Authorization': `Bearer ${token}` } : {};
-  };
-
   const fetchCampaigns = async () => {
     try {
-      const response = await fetch('/api/campaigns', {
-        headers: getAuthHeaders()
-      });
-
-      if (response.status === 401) {
-        console.error('Not authenticated');
-        setCampaigns([]);
-        setLoading(false);
-        return;
-      }
-
-      const data = await response.json();
-
+      const data = await api.get('/api/campaigns');
       if (Array.isArray(data)) {
         setCampaigns(data);
       } else {
@@ -95,14 +79,8 @@ const CampaignsList: React.FC = () => {
 
   const fetchTemplates = async () => {
     try {
-      const response = await fetch('/api/templates', {
-        headers: getAuthHeaders()
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setTemplates(data);
-      }
+      const data = await api.get('/api/templates');
+      setTemplates(data);
     } catch (error) {
       console.error('Error fetching templates:', error);
     }
@@ -110,24 +88,14 @@ const CampaignsList: React.FC = () => {
 
   const handleAddCampaign = async () => {
     try {
-      const response = await fetch('/api/campaigns', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...getAuthHeaders()
-        },
-        body: JSON.stringify({
-          ...newCampaign,
-          templateId: newCampaign.templateId || null,
-          lists: newCampaign.lists.split(',').map(l => l.trim()).filter(Boolean)
-        })
+      await api.post('/api/campaigns', {
+        ...newCampaign,
+        templateId: newCampaign.templateId || null,
+        lists: newCampaign.lists.split(',').map(l => l.trim()).filter(Boolean)
       });
-
-      if (response.ok) {
-        setShowAddModal(false);
-        setNewCampaign({ name: '', subject: '', templateId: '', fromName: '', fromEmail: '', lists: '' });
-        fetchCampaigns();
-      }
+      setShowAddModal(false);
+      setNewCampaign({ name: '', subject: '', templateId: '', fromName: '', fromEmail: '', lists: '' });
+      fetchCampaigns();
     } catch (error) {
       console.error('Error adding campaign:', error);
     }
@@ -137,11 +105,7 @@ const CampaignsList: React.FC = () => {
     if (!confirm('Are you sure you want to send this campaign?')) return;
 
     try {
-      const response = await fetch(`/api/campaigns/${id}/send`, {
-        method: 'POST',
-        headers: getAuthHeaders()
-      });
-      const result = await response.json();
+      const result = await api.post(`/api/campaigns/${id}/send`);
       alert(result.message || 'Campaign sent successfully!');
       fetchCampaigns();
     } catch (error) {
@@ -153,10 +117,7 @@ const CampaignsList: React.FC = () => {
     if (!confirm('Are you sure you want to delete this campaign?')) return;
 
     try {
-      await fetch(`/api/campaigns/${id}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders()
-      });
+      await api.delete(`/api/campaigns/${id}`);
       fetchCampaigns();
     } catch (error) {
       console.error('Error deleting campaign:', error);
@@ -169,10 +130,7 @@ const CampaignsList: React.FC = () => {
     setLoadingAnalytics(true);
 
     try {
-      const response = await fetch(`/api/campaigns/${campaign.id}/analytics`, {
-        headers: getAuthHeaders()
-      });
-      const data = await response.json();
+      const data = await api.get(`/api/campaigns/${campaign.id}/analytics`);
       setAnalytics(data);
     } catch (error) {
       console.error('Error fetching analytics:', error);

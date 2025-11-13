@@ -3,6 +3,7 @@ import { SESEmailService, SESEmailParams } from './sesService';
 import { db } from './db';
 import { emailProviderIntegrations } from './db';
 import { eq } from 'drizzle-orm';
+import { decryptObject } from './encryption';
 
 export interface EmailParams {
   to: string;
@@ -37,7 +38,9 @@ export class UnifiedEmailService {
       );
     }
     
-    const config = integration.config as any;
+    // Decrypt credentials from database before using
+    const encryptedConfig = integration.config as any;
+    const config = decryptObject(encryptedConfig);
     
     switch (integration.provider) {
       case 'ses':
