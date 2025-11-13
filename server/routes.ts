@@ -461,7 +461,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Campaign analytics not found" });
       }
       
-      res.json(analytics);
+      const clicksData = await db
+        .select({
+          url: linkClicks.url,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(linkClicks)
+        .where(eq(linkClicks.campaignId, req.params.id))
+        .groupBy(linkClicks.url)
+        .orderBy(sql`count(*) DESC`);
+      
+      res.json({
+        ...analytics,
+        linkClicks: clicksData,
+      });
     } catch (error) {
       console.error("Error fetching campaign analytics:", error);
       res.status(500).json({ message: "Failed to fetch campaign analytics" });

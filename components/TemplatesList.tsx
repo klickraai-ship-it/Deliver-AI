@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Trash2, Edit, Copy, Eye } from 'lucide-react';
+import { Plus, Search, Trash2, Edit, Copy, Eye, Code, FileText } from 'lucide-react';
 
 interface EmailTemplate {
   id: string;
@@ -10,11 +10,19 @@ interface EmailTemplate {
   createdAt: string;
 }
 
+const MERGE_TAGS = [
+  { tag: '{{firstName}}', description: 'Subscriber first name' },
+  { tag: '{{lastName}}', description: 'Subscriber last name' },
+  { tag: '{{email}}', description: 'Subscriber email' },
+];
+
 const TemplatesList: React.FC = () => {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [previewTemplate, setPreviewTemplate] = useState<EmailTemplate | null>(null);
   const [newTemplate, setNewTemplate] = useState({ name: '', subject: '', htmlContent: '', textContent: '' });
 
   useEffect(() => {
@@ -71,6 +79,27 @@ const TemplatesList: React.FC = () => {
     }
   };
 
+  const insertMergeTag = (tag: string) => {
+    setNewTemplate(prev => ({
+      ...prev,
+      htmlContent: prev.htmlContent + tag
+    }));
+  };
+
+  const handlePreview = (template: EmailTemplate) => {
+    setPreviewTemplate(template);
+    setShowPreviewModal(true);
+  };
+
+  const renderPreview = () => {
+    if (!previewTemplate) return '';
+    
+    return previewTemplate.htmlContent
+      .replace(/\{\{firstName\}\}/g, 'John')
+      .replace(/\{\{lastName\}\}/g, 'Doe')
+      .replace(/\{\{email\}\}/g, 'john.doe@example.com');
+  };
+
   const filteredTemplates = templates.filter(template =>
     template.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     template.subject.toLowerCase().includes(searchTerm.toLowerCase())
@@ -121,11 +150,17 @@ const TemplatesList: React.FC = () => {
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => handleDuplicateTemplate(template.id)}
+                  onClick={() => handlePreview(template)}
                   className="flex-1 flex items-center justify-center px-3 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors text-sm"
                 >
-                  <Copy className="h-4 w-4 mr-1" />
-                  Duplicate
+                  <Eye className="h-4 w-4 mr-1" />
+                  Preview
+                </button>
+                <button
+                  onClick={() => handleDuplicateTemplate(template.id)}
+                  className="px-3 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+                >
+                  <Copy className="h-4 w-4" />
                 </button>
                 <button
                   onClick={() => handleDeleteTemplate(template.id)}
@@ -145,9 +180,36 @@ const TemplatesList: React.FC = () => {
         </div>
       )}
 
+      {showPreviewModal && previewTemplate && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto p-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-white">{previewTemplate.name}</h2>
+                <p className="text-sm text-gray-400 mt-1">Subject: {previewTemplate.subject}</p>
+              </div>
+              <button
+                onClick={() => setShowPreviewModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+              <div className="bg-white rounded" dangerouslySetInnerHTML={{ __html: renderPreview() }} />
+            </div>
+            <div className="mt-4 p-3 bg-blue-900 bg-opacity-20 border border-blue-700 rounded-lg">
+              <p className="text-sm text-blue-300">
+                <strong>Preview with sample data:</strong> {'{'}firstName{'}'} → John, {'{'}lastName{'}'} → Doe, {'{'}email{'}'} → john.doe@example.com
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-          <div className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full m-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full m-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-white mb-4">Create New Template</h2>
             <div className="space-y-4">
               <div>
@@ -172,12 +234,26 @@ const TemplatesList: React.FC = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">HTML Content *</label>
+                <div className="mb-2 flex gap-2 flex-wrap">
+                  <span className="text-sm text-gray-400">Merge Tags:</span>
+                  {MERGE_TAGS.map((tag) => (
+                    <button
+                      key={tag.tag}
+                      type="button"
+                      onClick={() => insertMergeTag(tag.tag)}
+                      className="px-2 py-1 bg-brand-blue bg-opacity-20 text-brand-blue text-xs rounded hover:bg-opacity-30 transition-colors"
+                      title={tag.description}
+                    >
+                      {tag.tag}
+                    </button>
+                  ))}
+                </div>
                 <textarea
                   value={newTemplate.htmlContent}
                   onChange={(e) => setNewTemplate({ ...newTemplate, htmlContent: e.target.value })}
                   rows={8}
                   className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-blue font-mono text-sm"
-                  placeholder="<html><body>Hello!</body></html>"
+                  placeholder="<html><body>Hello {{firstName}}!</body></html>"
                 />
               </div>
               <div>

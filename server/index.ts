@@ -57,6 +57,14 @@ app.use((req, res, next) => {
     throw err;
   });
 
+  const originalUse = app.use.bind(app);
+  app.use = function(path: any, ...args: any[]) {
+    if (path === '*') {
+      return originalUse(...args);
+    }
+    return originalUse(path, ...args);
+  } as any;
+
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes

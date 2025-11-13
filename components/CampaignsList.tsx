@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Trash2, Send, Calendar, Eye } from 'lucide-react';
+import { Plus, Search, Trash2, Send, Calendar, Eye, BarChart3, MousePointerClick, Mail, UserX } from 'lucide-react';
 
 interface Campaign {
   id: string;
@@ -20,12 +20,28 @@ interface Template {
   subject: string;
 }
 
+interface CampaignAnalytics {
+  totalSubscribers: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  complained: number;
+  unsubscribed: number;
+  linkClicks: Array<{ url: string; count: number }>;
+}
+
 const CampaignsList: React.FC = () => {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [analytics, setAnalytics] = useState<CampaignAnalytics | null>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
   const [newCampaign, setNewCampaign] = useState({
     name: '',
     subject: '',
@@ -105,6 +121,22 @@ const CampaignsList: React.FC = () => {
       fetchCampaigns();
     } catch (error) {
       console.error('Error deleting campaign:', error);
+    }
+  };
+
+  const handleViewAnalytics = async (campaign: Campaign) => {
+    setSelectedCampaign(campaign);
+    setShowAnalyticsModal(true);
+    setLoadingAnalytics(true);
+    
+    try {
+      const response = await fetch(`/api/campaigns/${campaign.id}/analytics`);
+      const data = await response.json();
+      setAnalytics(data);
+    } catch (error) {
+      console.error('Error fetching analytics:', error);
+    } finally {
+      setLoadingAnalytics(false);
     }
   };
 
@@ -192,6 +224,15 @@ const CampaignsList: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end gap-2">
+                      {campaign.status === 'sent' && (
+                        <button
+                          onClick={() => handleViewAnalytics(campaign)}
+                          className="text-brand-blue hover:text-brand-blue-light"
+                          title="View analytics"
+                        >
+                          <BarChart3 className="h-4 w-4" />
+                        </button>
+                      )}
                       {campaign.status === 'draft' && (
                         <button
                           onClick={() => handleSendCampaign(campaign.id)}
@@ -204,6 +245,7 @@ const CampaignsList: React.FC = () => {
                       <button
                         onClick={() => handleDeleteCampaign(campaign.id)}
                         className="text-red-400 hover:text-red-300"
+                        title="Delete campaign"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -221,9 +263,128 @@ const CampaignsList: React.FC = () => {
         </div>
       )}
 
+      {showAnalyticsModal && selectedCampaign && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto p-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white">{selectedCampaign.name}</h2>
+                <p className="text-sm text-gray-400 mt-1">Campaign Analytics</p>
+              </div>
+              <button
+                onClick={() => setShowAnalyticsModal(false)}
+                className="text-gray-400 hover:text-white text-2xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            {loadingAnalytics ? (
+              <div className="flex justify-center py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand-blue"></div>
+              </div>
+            ) : analytics ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <Mail className="h-8 w-8 text-blue-400" />
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-white">{analytics.delivered}</div>
+                        <div className="text-xs text-gray-400">Delivered</div>
+                        <div className="text-xs text-gray-500">{analytics.sent > 0 ? ((analytics.delivered / analytics.sent) * 100).toFixed(1) : 0}%</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <Eye className="h-8 w-8 text-green-400" />
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-white">{analytics.opened}</div>
+                        <div className="text-xs text-gray-400">Opened</div>
+                        <div className="text-xs text-gray-500">{analytics.delivered > 0 ? ((analytics.opened / analytics.delivered) * 100).toFixed(1) : 0}%</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <MousePointerClick className="h-8 w-8 text-purple-400" />
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-white">{analytics.clicked}</div>
+                        <div className="text-xs text-gray-400">Clicked</div>
+                        <div className="text-xs text-gray-500">{analytics.delivered > 0 ? ((analytics.clicked / analytics.delivered) * 100).toFixed(1) : 0}%</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <UserX className="h-8 w-8 text-yellow-400" />
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-white">{analytics.unsubscribed}</div>
+                        <div className="text-xs text-gray-400">Unsubscribed</div>
+                        <div className="text-xs text-gray-500">{analytics.delivered > 0 ? ((analytics.unsubscribed / analytics.delivered) * 100).toFixed(2) : 0}%</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {analytics.bounced > 0 && (
+                  <div className="bg-red-900 bg-opacity-20 border border-red-700 rounded-lg p-4">
+                    <div className="flex items-center gap-3">
+                      <Mail className="h-6 w-6 text-red-400" />
+                      <div>
+                        <div className="text-sm font-semibold text-red-300">
+                          {analytics.bounced} Bounced ({analytics.sent > 0 ? ((analytics.bounced / analytics.sent) * 100).toFixed(2) : 0}%)
+                        </div>
+                        <div className="text-xs text-red-400">Emails that could not be delivered</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {analytics.complained > 0 && (
+                  <div className="bg-orange-900 bg-opacity-20 border border-orange-700 rounded-lg p-4">
+                    <div className="flex items-center gap-3">
+                      <Mail className="h-6 w-6 text-orange-400" />
+                      <div>
+                        <div className="text-sm font-semibold text-orange-300">
+                          {analytics.complained} Complaints ({analytics.delivered > 0 ? ((analytics.complained / analytics.delivered) * 100).toFixed(2) : 0}%)
+                        </div>
+                        <div className="text-xs text-orange-400">Recipients who marked this as spam</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {analytics.linkClicks && analytics.linkClicks.length > 0 && (
+                  <div className="bg-gray-900 border border-gray-700 rounded-lg p-4">
+                    <h3 className="text-lg font-semibold text-white mb-4">Link Clicks Breakdown</h3>
+                    <div className="space-y-2">
+                      {analytics.linkClicks.map((link, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 bg-gray-800 rounded border border-gray-700">
+                          <div className="flex-1 truncate text-sm text-gray-300 mr-4">{link.url}</div>
+                          <div className="text-sm font-semibold text-brand-blue">{link.count} clicks</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-400">
+                No analytics data available
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-          <div className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full m-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-2xl w-full m-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-white mb-4">Create New Campaign</h2>
             <div className="space-y-4">
               <div>
