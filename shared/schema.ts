@@ -28,7 +28,7 @@ export const insertUserSchema = z.object({
   name: z.string().min(1),
   companyName: z.string().optional(),
   role: z.enum(['user', 'admin']).default('user'),
-});
+}).strict();
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -62,15 +62,15 @@ export const userSettings = pgTable("user_settings", {
   userIdIdx: index("user_settings_user_id_idx").on(table.userId),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertUserSettingsSchema = z.object({
-  userId: z.string(),
   timezone: z.string().default('UTC'),
   language: z.string().default('en_US'),
   theme: z.enum(['light', 'dark']).default('dark'),
   defaultUrlParams: z.string().optional(),
   testEmailPrefix: z.string().default('[Test]'),
   rowsPerPage: z.number().default(200),
-});
+}).strict();
 
 export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;
 export type UserSettings = typeof userSettings.$inferSelect;
@@ -86,7 +86,7 @@ export const settings = pgTable("settings", {
 export const insertSettingSchema = z.object({
   key: z.string(),
   value: z.any(),
-});
+}).strict();
 
 export type InsertSetting = z.infer<typeof insertSettingSchema>;
 export type Setting = typeof settings.$inferSelect;
@@ -109,11 +109,11 @@ export const lists = pgTable("lists", {
   uniqueUserIdName: unique("lists_user_id_name_unique").on(table.userId, table.name),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertListSchema = z.object({
-  userId: z.string(),
   name: z.string().min(1),
   description: z.string().optional(),
-});
+}).strict();
 
 export type InsertList = z.infer<typeof insertListSchema>;
 export type List = typeof lists.$inferSelect;
@@ -130,12 +130,12 @@ export const blacklist = pgTable("blacklist", {
   userIdIdx: index("blacklist_user_id_idx").on(table.userId),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertBlacklistSchema = z.object({
-  userId: z.string(),
   email: z.string().email().optional(),
   domain: z.string().optional(),
   reason: z.enum(['hard_bounce', 'complaint', 'manual', 'spam']),
-}).refine((data) => data.email || data.domain, {
+}).strict().refine((data) => data.email || data.domain, {
   message: "Either email or domain must be provided",
 });
 
@@ -158,15 +158,15 @@ export const rules = pgTable("rules", {
   userIdIdx: index("rules_user_id_idx").on(table.userId),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertRuleSchema = z.object({
-  userId: z.string(),
   name: z.string().min(1),
   triggerType: z.enum(['subscriber_created', 'email_opened', 'link_clicked', 'subscribed_to_list']),
   triggerConditions: z.record(z.string(), z.any()).default({}),
   actionType: z.enum(['add_to_list', 'remove_from_list', 'send_email', 'update_field']),
   actionData: z.record(z.string(), z.any()).default({}),
   isActive: z.boolean().default(true),
-});
+}).strict();
 
 export type InsertRule = z.infer<typeof insertRuleSchema>;
 export type Rule = typeof rules.$inferSelect;
@@ -192,8 +192,8 @@ export const subscribers = pgTable("subscribers", {
   uniqueIdUserId: unique("subscribers_id_user_id_unique").on(table.id, table.userId),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertSubscriberSchema = z.object({
-  userId: z.string(),
   email: z.string().email(),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
@@ -201,7 +201,7 @@ export const insertSubscriberSchema = z.object({
   lists: z.array(z.string()).default([]),
   metadata: z.record(z.string(), z.any()).default({}),
   consentGiven: z.boolean().default(false),
-});
+}).strict();
 
 export type InsertSubscriber = z.infer<typeof insertSubscriberSchema>;
 export type Subscriber = typeof subscribers.$inferSelect;
@@ -223,14 +223,14 @@ export const emailTemplates = pgTable("email_templates", {
   uniqueIdUserId: unique("email_templates_id_user_id_unique").on(table.id, table.userId),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertEmailTemplateSchema = z.object({
-  userId: z.string(),
   name: z.string(),
   subject: z.string(),
   htmlContent: z.string(),
   textContent: z.string().optional(),
   thumbnailUrl: z.string().optional(),
-});
+}).strict();
 
 export type InsertEmailTemplate = z.infer<typeof insertEmailTemplateSchema>;
 export type EmailTemplate = typeof emailTemplates.$inferSelect;
@@ -269,8 +269,8 @@ export const campaigns = pgTable("campaigns", {
   }).onDelete('cascade'),
 }));
 
+// Client-side schema (userId will be added server-side from session)
 export const insertCampaignSchema = z.object({
-  userId: z.string(),
   name: z.string(),
   subject: z.string(),
   templateId: z.string().optional(),
@@ -281,7 +281,7 @@ export const insertCampaignSchema = z.object({
   lists: z.array(z.string()).default([]),
   scheduledAt: z.string().optional(),
   sentAt: z.string().optional(),
-});
+}).strict();
 
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
 export type Campaign = typeof campaigns.$inferSelect;

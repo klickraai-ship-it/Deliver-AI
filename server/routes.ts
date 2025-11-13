@@ -9,6 +9,8 @@ import {
   campaignAnalytics,
   settings,
   linkClicks,
+  users,
+  sessions,
   insertSubscriberSchema,
   insertEmailTemplateSchema,
   insertCampaignSchema,
@@ -17,27 +19,240 @@ import {
   type EmailTemplate,
   type Campaign,
   type CampaignAnalytics,
+  type User,
+  type Session,
 } from "@/shared/schema";
 import { eq, desc, inArray, and, sql } from "drizzle-orm";
 import { setupTrackingRoutes } from "./tracking";
+import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
+
+// Middleware to validate session and extract userId
+async function requireAuth(req: any, res: any, next: any) {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ message: "Unauthorized - No token provided" });
+  }
+  
+  const token = authHeader.substring(7);
+  
+  try {
+    const [session] = await db
+      .select()
+      .from(sessions)
+      .where(and(
+        eq(sessions.token, token),
+        sql`${sessions.expiresAt} > NOW()`
+      ))
+      .limit(1);
+    
+    if (!session) {
+      return res.status(401).json({ message: "Unauthorized - Invalid or expired token" });
+    }
+    
+    // Add userId to request for use in route handlers
+    req.userId = session.userId;
+    next();
+  } catch (error) {
+    console.error("Auth middleware error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+// Helper to generate secure session token
+function generateSessionToken(): string {
+  return randomBytes(32).toString('hex');
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   
   setupTrackingRoutes(app);
   
+  // ========== AUTH API (Public - No Auth Required) ==========
+  
+  // Sign up
+  app.post("/api/auth/signup", async (req, res) => {
+    try {
+      const { email, password, name, companyName } = req.body;
+      
+      // Validate input
+      if (!email || !password || !name) {
+        return res.status(400).json({ message: "Email, password, and name are required" });
+      }
+      
+      // Email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: "Invalid email format" });
+      }
+      
+      // Password strength check (min 8 chars, at least one letter and one number)
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters long" });
+      }
+      
+      const hasLetter = /[a-zA-Z]/.test(password);
+      const hasNumber = /[0-9]/.test(password);
+      if (!hasLetter || !hasNumber) {
+        return res.status(400).json({ message: "Password must contain at least one letter and one number" });
+      }
+      
+      // Check if user already exists
+      const [existingUser] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, email.toLowerCase()))
+        .limit(1);
+      
+      if (existingUser) {
+        return res.status(409).json({ message: "Email already registered" });
+      }
+      
+      // Hash password
+      const passwordHash = await bcrypt.hash(password, 10);
+      
+      // Create user
+      const [newUser] = await db
+        .insert(users)
+        .values({
+          email: email.toLowerCase(),
+          passwordHash,
+          name,
+          companyName: companyName || null,
+        })
+        .returning();
+      
+      // Create session
+      const sessionToken = generateSessionToken();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      
+      await db.insert(sessions).values({
+        userId: newUser.id,
+        token: sessionToken,
+        expiresAt,
+      });
+      
+      // Return user and token (excluding password hash)
+      const { passwordHash: _, ...userWithoutPassword } = newUser;
+      
+      res.status(201).json({
+        user: userWithoutPassword,
+        token: sessionToken,
+      });
+    } catch (error) {
+      console.error("Signup error:", error);
+      res.status(500).json({ message: "Failed to create account" });
+    }
+  });
+  
+  // Login
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required" });
+      }
+      
+      // Find user
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, email.toLowerCase()))
+        .limit(1);
+      
+      if (!user) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      
+      // Verify password
+      const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+      
+      if (!isValidPassword) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      
+      // Create session
+      const sessionToken = generateSessionToken();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      
+      await db.insert(sessions).values({
+        userId: user.id,
+        token: sessionToken,
+        expiresAt,
+      });
+      
+      // Return user and token (excluding password hash)
+      const { passwordHash: _, ...userWithoutPassword } = user;
+      
+      res.json({
+        user: userWithoutPassword,
+        token: sessionToken,
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+      res.status(500).json({ message: "Failed to login" });
+    }
+  });
+  
+  // Logout
+  app.post("/api/auth/logout", requireAuth, async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.substring(7);
+      
+      if (token) {
+        await db.delete(sessions).where(eq(sessions.token, token));
+      }
+      
+      res.json({ message: "Logged out successfully" });
+    } catch (error) {
+      console.error("Logout error:", error);
+      res.status(500).json({ message: "Failed to logout" });
+    }
+  });
+  
+  // Get current user
+  app.get("/api/auth/me", requireAuth, async (req, res) => {
+    try {
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, (req as any).userId))
+        .limit(1);
+      
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      const { passwordHash: _, ...userWithoutPassword } = user;
+      res.json(userWithoutPassword);
+    } catch (error) {
+      console.error("Get user error:", error);
+      res.status(500).json({ message: "Failed to get user" });
+    }
+  });
+  
   // ========== SUBSCRIBERS API ==========
   
   // Get all subscribers
-  app.get("/api/subscribers", async (req, res) => {
+  app.get("/api/subscribers", requireAuth, async (req, res) => {
     try {
       const { status, list } = req.query;
-      let query = db.select().from(subscribers);
+      const userId = (req as any).userId;
+      
+      let conditions = [eq(subscribers.userId, userId)];
       
       if (status) {
-        query = query.where(eq(subscribers.status, status as string)) as any;
+        conditions.push(eq(subscribers.status, status as string));
       }
       
-      const results = await query.orderBy(desc(subscribers.createdAt));
+      const results = await db
+        .select()
+        .from(subscribers)
+        .where(and(...conditions))
+        .orderBy(desc(subscribers.createdAt));
       
       // Filter by list if provided
       let filteredResults = results;
@@ -53,12 +268,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Get single subscriber
-  app.get("/api/subscribers/:id", async (req, res) => {
+  app.get("/api/subscribers/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [subscriber] = await db
         .select()
         .from(subscribers)
-        .where(eq(subscribers.id, req.params.id));
+        .where(and(
+          eq(subscribers.id, req.params.id),
+          eq(subscribers.userId, userId)
+        ));
       
       if (!subscriber) {
         return res.status(404).json({ message: "Subscriber not found" });
@@ -72,14 +291,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Create subscriber
-  app.post("/api/subscribers", async (req, res) => {
+  app.post("/api/subscribers", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const validatedData = insertSubscriberSchema.parse(req.body);
       
       const [newSubscriber] = await db
         .insert(subscribers)
         .values({
           ...validatedData,
+          userId,
         })
         .returning();
       
@@ -91,14 +312,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Update subscriber
-  app.patch("/api/subscribers/:id", async (req, res) => {
+  app.patch("/api/subscribers/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
+      // Filter out protected/system fields to prevent userId reassignment and tenant breakout
+      const { userId: _, id: __, createdAt: ___, updatedAt: ____, ...allowedUpdates } = req.body;
+      
       const [updated] = await db
         .update(subscribers)
-        .set({
-          ...req.body,
-        })
-        .where(eq(subscribers.id, req.params.id))
+        .set(allowedUpdates)
+        .where(and(
+          eq(subscribers.id, req.params.id),
+          eq(subscribers.userId, userId)
+        ))
         .returning();
       
       if (!updated) {
@@ -113,11 +339,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Delete subscriber
-  app.delete("/api/subscribers/:id", async (req, res) => {
+  app.delete("/api/subscribers/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [deleted] = await db
         .delete(subscribers)
-        .where(eq(subscribers.id, req.params.id))
+        .where(and(
+          eq(subscribers.id, req.params.id),
+          eq(subscribers.userId, userId)
+        ))
         .returning();
       
       if (!deleted) {
@@ -134,11 +364,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== EMAIL TEMPLATES API ==========
   
   // Get all templates
-  app.get("/api/templates", async (req, res) => {
+  app.get("/api/templates", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const templates = await db
         .select()
         .from(emailTemplates)
+        .where(eq(emailTemplates.userId, userId))
         .orderBy(desc(emailTemplates.createdAt));
       
       res.json(templates);
@@ -149,12 +381,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Get single template
-  app.get("/api/templates/:id", async (req, res) => {
+  app.get("/api/templates/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [template] = await db
         .select()
         .from(emailTemplates)
-        .where(eq(emailTemplates.id, req.params.id));
+        .where(and(
+          eq(emailTemplates.id, req.params.id),
+          eq(emailTemplates.userId, userId)
+        ));
       
       if (!template) {
         return res.status(404).json({ message: "Template not found" });
@@ -168,14 +404,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Create template
-  app.post("/api/templates", async (req, res) => {
+  app.post("/api/templates", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const validatedData = insertEmailTemplateSchema.parse(req.body);
       
       const [newTemplate] = await db
         .insert(emailTemplates)
         .values({
           ...validatedData,
+          userId,
         })
         .returning();
       
@@ -187,14 +425,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Update template
-  app.patch("/api/templates/:id", async (req, res) => {
+  app.patch("/api/templates/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
+      // Filter out protected/system fields to prevent userId reassignment and tenant breakout
+      const { userId: _, id: __, createdAt: ___, updatedAt: ____, ...allowedUpdates } = req.body;
+      
       const [updated] = await db
         .update(emailTemplates)
-        .set({
-          ...req.body,
-        })
-        .where(eq(emailTemplates.id, req.params.id))
+        .set(allowedUpdates)
+        .where(and(
+          eq(emailTemplates.id, req.params.id),
+          eq(emailTemplates.userId, userId)
+        ))
         .returning();
       
       if (!updated) {
@@ -209,11 +452,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Delete template
-  app.delete("/api/templates/:id", async (req, res) => {
+  app.delete("/api/templates/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [deleted] = await db
         .delete(emailTemplates)
-        .where(eq(emailTemplates.id, req.params.id))
+        .where(and(
+          eq(emailTemplates.id, req.params.id),
+          eq(emailTemplates.userId, userId)
+        ))
         .returning();
       
       if (!deleted) {
@@ -228,12 +475,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Duplicate template
-  app.post("/api/templates/:id/duplicate", async (req, res) => {
+  app.post("/api/templates/:id/duplicate", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [original] = await db
         .select()
         .from(emailTemplates)
-        .where(eq(emailTemplates.id, req.params.id));
+        .where(and(
+          eq(emailTemplates.id, req.params.id),
+          eq(emailTemplates.userId, userId)
+        ));
       
       if (!original) {
         return res.status(404).json({ message: "Template not found" });
@@ -242,6 +493,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const [duplicated] = await db
         .insert(emailTemplates)
         .values({
+          userId,
           name: `${original.name} (Copy)`,
           subject: original.subject,
           htmlContent: original.htmlContent,
@@ -260,17 +512,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== CAMPAIGNS API ==========
   
   // Get all campaigns
-  app.get("/api/campaigns", async (req, res) => {
+  app.get("/api/campaigns", requireAuth, async (req, res) => {
     try {
       const { status } = req.query;
+      const userId = (req as any).userId;
       
-      let query = db.select().from(campaigns);
+      let conditions = [eq(campaigns.userId, userId)];
       
       if (status) {
-        query = query.where(eq(campaigns.status, status as string)) as any;
+        conditions.push(eq(campaigns.status, status as string));
       }
       
-      const results = await query.orderBy(desc(campaigns.createdAt));
+      const results = await db
+        .select()
+        .from(campaigns)
+        .where(and(...conditions))
+        .orderBy(desc(campaigns.createdAt));
       
       res.json(results);
     } catch (error) {
@@ -280,12 +537,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Get single campaign with analytics
-  app.get("/api/campaigns/:id", async (req, res) => {
+  app.get("/api/campaigns/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [campaign] = await db
         .select()
         .from(campaigns)
-        .where(eq(campaigns.id, req.params.id));
+        .where(and(
+          eq(campaigns.id, req.params.id),
+          eq(campaigns.userId, userId)
+        ));
       
       if (!campaign) {
         return res.status(404).json({ message: "Campaign not found" });
@@ -295,7 +556,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const [analytics] = await db
         .select()
         .from(campaignAnalytics)
-        .where(eq(campaignAnalytics.campaignId, req.params.id));
+        .where(and(
+          eq(campaignAnalytics.campaignId, req.params.id),
+          eq(campaignAnalytics.userId, userId)
+        ));
       
       // Get template if exists
       let template = null;
@@ -303,7 +567,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const [tmpl] = await db
           .select()
           .from(emailTemplates)
-          .where(eq(emailTemplates.id, campaign.templateId));
+          .where(and(
+            eq(emailTemplates.id, campaign.templateId),
+            eq(emailTemplates.userId, userId)
+          ));
         template = tmpl;
       }
       
@@ -315,19 +582,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Create campaign
-  app.post("/api/campaigns", async (req, res) => {
+  app.post("/api/campaigns", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const validatedData = insertCampaignSchema.parse(req.body);
+      
+      const campaignData: any = {
+        ...validatedData,
+        userId,
+      };
+      
+      // Convert date strings to Date objects if present
+      if (campaignData.scheduledAt) {
+        campaignData.scheduledAt = new Date(campaignData.scheduledAt);
+      }
+      if (campaignData.sentAt) {
+        campaignData.sentAt = new Date(campaignData.sentAt);
+      }
       
       const [newCampaign] = await db
         .insert(campaigns)
-        .values({
-          ...validatedData,
-        })
+        .values(campaignData)
         .returning();
       
       // Create initial analytics record
       await db.insert(campaignAnalytics).values({
+        userId,
         campaignId: newCampaign.id,
       });
       
@@ -339,14 +619,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Update campaign
-  app.patch("/api/campaigns/:id", async (req, res) => {
+  app.patch("/api/campaigns/:id", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
+      // Filter out protected/system fields to prevent userId reassignment and tenant breakout
+      const { userId: _, id: __, createdAt: ___, updatedAt: ____, sentAt: _____, ...allowedUpdates } = req.body;
+      
       const [updated] = await db
         .update(campaigns)
-        .set({
-          ...req.body,
-        })
-        .where(eq(campaigns.id, req.params.id))
+        .set(allowedUpdates)
+        .where(and(
+          eq(campaigns.id, req.params.id),
+          eq(campaigns.userId, userId)
+        ))
         .returning();
       
       if (!updated) {
@@ -361,15 +646,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Delete campaign
-  app.delete("/api/campaigns/:id", async (req, res) => {
+  app.delete("/api/campaigns/:id", requireAuth, async (req, res) => {
     try {
-      // Delete related records first
-      await db.delete(campaignSubscribers).where(eq(campaignSubscribers.campaignId, req.params.id));
-      await db.delete(campaignAnalytics).where(eq(campaignAnalytics.campaignId, req.params.id));
+      const userId = (req as any).userId;
+      
+      // Delete related records first (filtering by userId for security)
+      await db.delete(campaignSubscribers).where(and(
+        eq(campaignSubscribers.campaignId, req.params.id),
+        eq(campaignSubscribers.userId, userId)
+      ));
+      await db.delete(campaignAnalytics).where(and(
+        eq(campaignAnalytics.campaignId, req.params.id),
+        eq(campaignAnalytics.userId, userId)
+      ));
       
       const [deleted] = await db
         .delete(campaigns)
-        .where(eq(campaigns.id, req.params.id))
+        .where(and(
+          eq(campaigns.id, req.params.id),
+          eq(campaigns.userId, userId)
+        ))
         .returning();
       
       if (!deleted) {
@@ -384,12 +680,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Send campaign (mark as sending and create subscriber records)
-  app.post("/api/campaigns/:id/send", async (req, res) => {
+  app.post("/api/campaigns/:id/send", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [campaign] = await db
         .select()
         .from(campaigns)
-        .where(eq(campaigns.id, req.params.id));
+        .where(and(
+          eq(campaigns.id, req.params.id),
+          eq(campaigns.userId, userId)
+        ));
       
       if (!campaign) {
         return res.status(404).json({ message: "Campaign not found" });
@@ -399,11 +699,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Campaign already sent or sending" });
       }
       
-      // Get subscribers matching the campaign lists
+      // Get subscribers matching the campaign lists (only for this user)
       const eligibleSubscribers = await db
         .select()
         .from(subscribers)
-        .where(eq(subscribers.status, 'active'));
+        .where(and(
+          eq(subscribers.status, 'active'),
+          eq(subscribers.userId, userId)
+        ));
       
       // Filter by lists
       const targetSubscribers = eligibleSubscribers.filter(sub =>
@@ -413,6 +716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create campaign_subscribers records
       if (targetSubscribers.length > 0) {
         const subscriberRecords = targetSubscribers.map(sub => ({
+          userId,
           campaignId: campaign.id,
           subscriberId: sub.id,
           status: 'pending' as const,
@@ -428,7 +732,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: 'sending',
           sentAt: new Date(),
         })
-        .where(eq(campaigns.id, req.params.id))
+        .where(and(
+          eq(campaigns.id, req.params.id),
+          eq(campaigns.userId, userId)
+        ))
         .returning();
       
       // Update analytics
@@ -437,7 +744,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .set({
           totalSubscribers: targetSubscribers.length,
         })
-        .where(eq(campaignAnalytics.campaignId, req.params.id));
+        .where(and(
+          eq(campaignAnalytics.campaignId, req.params.id),
+          eq(campaignAnalytics.userId, userId)
+        ));
       
       res.json({
         ...updated,
@@ -450,12 +760,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Get campaign analytics
-  app.get("/api/campaigns/:id/analytics", async (req, res) => {
+  app.get("/api/campaigns/:id/analytics", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       const [analytics] = await db
         .select()
         .from(campaignAnalytics)
-        .where(eq(campaignAnalytics.campaignId, req.params.id));
+        .where(and(
+          eq(campaignAnalytics.campaignId, req.params.id),
+          eq(campaignAnalytics.userId, userId)
+        ));
       
       if (!analytics) {
         return res.status(404).json({ message: "Campaign analytics not found" });
@@ -467,7 +781,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           count: sql<number>`count(*)::int`,
         })
         .from(linkClicks)
-        .where(eq(linkClicks.campaignId, req.params.id))
+        .where(and(
+          eq(linkClicks.campaignId, req.params.id),
+          eq(linkClicks.userId, userId)
+        ))
         .groupBy(linkClicks.url)
         .orderBy(sql`count(*) DESC`);
       
@@ -484,13 +801,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== DASHBOARD DATA API ==========
   
   // Get dashboard summary
-  app.get("/api/dashboard", async (req, res) => {
+  app.get("/api/dashboard", requireAuth, async (req, res) => {
     try {
+      const userId = (req as any).userId;
       // Get recent campaigns analytics
       const recentCampaigns = await db
         .select()
         .from(campaigns)
-        .where(eq(campaigns.status, 'sent'))
+        .where(and(
+          eq(campaigns.status, 'sent'),
+          eq(campaigns.userId, userId)
+        ))
         .orderBy(desc(campaigns.sentAt))
         .limit(10);
       
@@ -554,14 +875,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // ========== CAMPAIGN SENDING API ==========
   
-  app.post("/api/campaigns/:id/send", async (req, res) => {
+  app.post("/api/campaigns/:id/send", requireAuth, async (req, res) => {
     try {
       const campaignId = req.params.id;
+      const userId = (req as any).userId;
       
       const [campaign] = await db
         .select()
         .from(campaigns)
-        .where(eq(campaigns.id, campaignId))
+        .where(and(
+          eq(campaigns.id, campaignId),
+          eq(campaigns.userId, userId)
+        ))
         .limit(1);
       
       if (!campaign) {
@@ -572,13 +897,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Campaign has already been sent" });
       }
       
-      let emailContent = { subject: campaign.subject, htmlContent: '', textContent: '' as string | undefined };
+      let emailContent = { subject: campaign.subject, htmlContent: '', textContent: '' };
       
       if (campaign.templateId) {
         const [template] = await db
           .select()
           .from(emailTemplates)
-          .where(eq(emailTemplates.id, campaign.templateId))
+          .where(and(
+            eq(emailTemplates.id, campaign.templateId),
+            eq(emailTemplates.userId, userId)
+          ))
           .limit(1);
         
         if (template) {
@@ -592,7 +920,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let targetSubscribers = await db
         .select()
         .from(subscribers)
-        .where(eq(subscribers.status, 'active'));
+        .where(and(
+          eq(subscribers.status, 'active'),
+          eq(subscribers.userId, userId)
+        ));
       
       if (campaign.lists.length > 0) {
         targetSubscribers = targetSubscribers.filter(sub => 
@@ -606,6 +937,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       for (const subscriber of targetSubscribers) {
         await db.insert(campaignSubscribers).values({
+          userId,
           campaignId: campaign.id,
           subscriberId: subscriber.id,
           status: 'pending',
@@ -615,7 +947,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await db
         .update(campaigns)
         .set({ status: 'sending' })
-        .where(eq(campaigns.id, campaignId));
+        .where(and(
+          eq(campaigns.id, campaignId),
+          eq(campaigns.userId, userId)
+        ));
       
       res.json({
         message: "Campaign sending started",
@@ -638,13 +973,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           for (const subscriber of targetSubscribers) {
             try {
-              let processedContent = {
-                ...emailContent,
+              const processedContentBase = {
                 subject: trackingService.replaceMergeTags(emailContent.subject, subscriber),
                 htmlContent: trackingService.replaceMergeTags(emailContent.htmlContent, subscriber),
+                textContent: emailContent.textContent,
               };
               
-              processedContent = trackingService.processEmailForTracking(processedContent, {
+              const processedContent = trackingService.processEmailForTracking(processedContentBase, {
                 campaignId: campaign.id,
                 subscriberId: subscriber.id,
                 trackingDomain,
@@ -681,6 +1016,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .where(eq(campaigns.id, campaignId));
           
           await db.insert(campaignAnalytics).values({
+            userId: campaign.userId,
             campaignId: campaign.id,
             totalSubscribers: targetSubscribers.length,
             sent: sentCount,
@@ -711,14 +1047,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  app.get("/api/campaigns/:id/analytics/clicks", async (req, res) => {
+  app.get("/api/campaigns/:id/analytics/clicks", requireAuth, async (req, res) => {
     try {
       const campaignId = req.params.id;
+      const userId = (req as any).userId;
       
       const clicks = await db
         .select()
         .from(linkClicks)
-        .where(eq(linkClicks.campaignId, campaignId))
+        .where(and(
+          eq(linkClicks.campaignId, campaignId),
+          eq(linkClicks.userId, userId)
+        ))
         .orderBy(desc(linkClicks.clickedAt));
       
       const linkStats = clicks.reduce((acc, click) => {
@@ -752,7 +1092,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ========== SETTINGS API ==========
   
   // Get all settings
-  app.get("/api/settings", async (req, res) => {
+  app.get("/api/settings", requireAuth, async (req, res) => {
     try {
       const allSettings = await db.select().from(settings);
       
@@ -770,7 +1110,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Get single setting
-  app.get("/api/settings/:key", async (req, res) => {
+  app.get("/api/settings/:key", requireAuth, async (req, res) => {
     try {
       const [setting] = await db
         .select()
@@ -789,7 +1129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Update or create setting
-  app.put("/api/settings/:key", async (req, res) => {
+  app.put("/api/settings/:key", requireAuth, async (req, res) => {
     try {
       const { value } = req.body;
       
@@ -826,7 +1166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Delete setting
-  app.delete("/api/settings/:key", async (req, res) => {
+  app.delete("/api/settings/:key", requireAuth, async (req, res) => {
     try {
       const [deleted] = await db
         .delete(settings)
