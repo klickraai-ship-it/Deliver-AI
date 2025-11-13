@@ -7,6 +7,7 @@ import SubscribersList from './components/SubscribersList';
 import TemplatesList from './components/TemplatesList';
 import CampaignsList from './components/CampaignsList';
 import SettingsPage from './components/SettingsPage';
+import LoginPage from './components/LoginPage';
 
 // Mock data generation
 const generateMockData = (): DashboardData => ({
@@ -36,34 +37,150 @@ const generateMockData = (): DashboardData => ({
 type PageType = 'dashboard' | 'campaigns' | 'templates' | 'subscribers' | 'settings';
 
 const App: React.FC = () => {
+  const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<any>(null);
 
   useEffect(() => {
-    if (currentPage === 'dashboard') {
-      fetchDashboardData();
-    }
-  }, [currentPage]);
+    checkAuth();
+  }, []);
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  const checkAuth = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await fetch('/api/dashboard');
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        setIsAuthenticated(true);
+        fetchDashboardData(token);
+      } else {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('Auth check failed:', error);
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = (token: string, userData: any) => {
+    localStorage.setItem('authToken', token);
+    localStorage.setItem('user', JSON.stringify(userData));
+    setUser(userData);
+    setIsAuthenticated(true);
+    fetchDashboardData(token);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('user');
+    setIsAuthenticated(false);
+    setUser(null);
+    setData(null);
+    setCurrentPage('dashboard'); // Reset to dashboard after logout
+  };
+
+  const fetchDashboardData = async (token?: string) => {
+    const authToken = token || localStorage.getItem('authToken');
+    if (!authToken) {
+        setLoading(false);
+        return;
+    }
+
+    setLoading(true); // Ensure loading is true when fetching
+    try {
+      const response = await fetch('/api/dashboard', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
       if (!response.ok) {
         console.warn('Dashboard API returned error:', response.status);
-        setData(generateMockData());
+        if (response.status === 401) {
+            handleLogout(); // Log out if unauthorized
+            return;
+        }
+        setData(generateMockData()); // Use mock data on error if not 401
         return;
       }
       const dashboardData = await response.json();
       setData(dashboardData);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
-      setData(generateMockData());
+      setData(generateMockData()); // Use mock data on catch
     } finally {
       setLoading(false);
     }
   };
+
+  // Handle fetching data for other pages if needed, passing the token
+  const fetchCampaignsData = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return null;
+    try {
+      const response = await fetch('/api/campaigns', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        console.error('Failed to fetch campaigns data');
+        if (response.status === 401) handleLogout();
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching campaigns data:', error);
+      return null;
+    }
+  };
+
+  const fetchTemplatesData = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return null;
+    try {
+      const response = await fetch('/api/templates', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        console.error('Failed to fetch templates data');
+        if (response.status === 401) handleLogout();
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching templates data:', error);
+      return null;
+    }
+  };
+
+  const fetchSubscribersData = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return null;
+    try {
+      const response = await fetch('/api/subscribers', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        console.error('Failed to fetch subscribers data');
+        if (response.status === 401) handleLogout();
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching subscribers data:', error);
+      return null;
+    }
+  };
+
 
   const renderPage = () => {
     switch (currentPage) {
@@ -84,6 +201,8 @@ const App: React.FC = () => {
         }
         return <Dashboard data={data} />;
       case 'campaigns':
+        // In a real app, you would fetch campaigns data here and pass it to CampaignsList
+        // For now, we'll render the component, assuming it handles its own fetching or uses mock data
         return <CampaignsList />;
       case 'templates':
         return <TemplatesList />;
@@ -92,6 +211,13 @@ const App: React.FC = () => {
       case 'settings':
         return <SettingsPage />;
       default:
+        if (loading) {
+          return (
+            <div className="flex justify-center items-center h-full">
+              <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+            </div>
+          );
+        }
         if (!data) {
           return (
             <div className="text-center text-gray-400 p-8">
@@ -103,12 +229,24 @@ const App: React.FC = () => {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-900">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
   return (
-    <div className="flex h-screen bg-gray-900 font-sans">
+    <div className="flex h-screen bg-gray-900 text-white overflow-hidden">
       <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-900 p-4 sm:p-6 lg:p-8">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <Header user={user} onLogout={handleLogout} />
+        <main className="flex-1 p-8 overflow-y-auto">
           {renderPage()}
         </main>
       </div>

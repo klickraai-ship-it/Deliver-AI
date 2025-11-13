@@ -1,8 +1,14 @@
-
 import React from 'react';
-import { Bell, Search } from 'lucide-react';
+import { Bell, Search, LogOut } from 'lucide-react';
 
 const Header: React.FC = () => {
+  // Placeholder for user data and logout function. In a real app, these would come from an auth context.
+  const user = { name: 'Admin User', email: 'admin@brand.com' }; 
+  const onLogout = () => { 
+    console.log("Logging out..."); 
+    // In a real app, you would clear tokens and redirect to login
+  };
+
   return (
     <header className="flex items-center justify-between h-16 bg-gray-800 border-b border-gray-700 px-4 sm:px-6 lg:px-8">
       <div>
@@ -21,17 +27,28 @@ const Header: React.FC = () => {
         <button className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white">
           <Bell className="h-6 w-6" />
         </button>
-        <div className="flex items-center">
-            <img 
-                className="h-9 w-9 rounded-full" 
-                src="https://picsum.photos/100/100" 
-                alt="User avatar" 
-            />
-            <div className="ml-3 hidden lg:block">
-                <p className="text-sm font-medium text-white">Admin User</p>
-                <p className="text-xs text-gray-400">Brand Inc.</p>
+        {user && (
+          <div className="flex items-center gap-2">
+            <div className="text-right hidden sm:block">
+              <div className="text-sm font-medium text-white">{user.name}</div>
+              <div className="text-xs text-gray-400">{user.email}</div>
             </div>
-        </div>
+            <div className="h-8 w-8 bg-brand-blue rounded-full flex items-center justify-center">
+              <span className="text-sm font-medium">
+                {user.name?.charAt(0).toUpperCase() || 'U'}
+              </span>
+            </div>
+          </div>
+        )}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="p-2 rounded-full text-gray-400 hover:bg-gray-700 hover:text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-white"
+            title="Logout"
+          >
+            <LogOut className="h-6 w-6" />
+          </button>
+        )}
       </div>
     </header>
   );

@@ -67,7 +67,10 @@ const SubscribersList: React.FC = () => {
     if (!confirm('Are you sure you want to delete this subscriber?')) return;
 
     try {
-      await fetch(`/api/subscribers/${id}`, { method: 'DELETE' });
+      await fetch(`/api/subscribers/${id}`, { 
+        method: 'DELETE',
+        headers: getAuthHeaders()
+      });
       fetchSubscribers();
     } catch (error) {
       console.error('Error deleting subscriber:', error);
@@ -231,6 +234,16 @@ const SubscribersList: React.FC = () => {
       )}
     </div>
   );
+};
+
+// Assume getAuthHeaders is defined elsewhere or imported
+// For example:
+// import { getAuthHeaders } from './auth'; 
+
+// Placeholder for getAuthHeaders if not provided
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('authToken');
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 export default SubscribersList;
