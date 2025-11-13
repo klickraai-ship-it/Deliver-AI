@@ -52,7 +52,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, mobileMenuOp
             <button
               key={item.label}
               onClick={() => onNavigate(item.page)}
-              className={`group w-full flex items-center px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+              className={`group w-full flex items-center px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium transition-all duration-200 ${
                 isActive
                   ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/30'
                   : 'text-gray-400 hover:bg-gray-700/50 hover:text-white hover:scale-[1.02]'
@@ -65,7 +65,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, mobileMenuOp
         })}
       </nav>
         <div className="p-4 border-t border-gray-700/50">
-           <a href="#" className="group flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-700/50 hover:text-white transition-all duration-200 hover:scale-[1.02]">
+           <a href="#" className="group flex items-center px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-700/50 hover:text-white transition-all duration-200 hover:scale-[1.02]">
                <LifeBuoy className="h-5 w-5 mr-3 group-hover:scale-110 transition-transform duration-200" />
                Support
            </a>
@@ -103,7 +103,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, mobileMenuOp
               <button
                 key={item.label}
                 onClick={() => onNavigate(item.page)}
-                className={`group w-full flex items-center px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+                className={`group w-full flex items-center px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium transition-all duration-200 ${
                   isActive
                     ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg shadow-blue-500/30'
                     : 'text-gray-400 hover:bg-gray-700/50 hover:text-white hover:scale-[1.02]'
@@ -116,7 +116,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, mobileMenuOp
           })}
         </nav>
         <div className="p-4 border-t border-gray-700/50">
-           <a href="#" className="group flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-700/50 hover:text-white transition-all duration-200 hover:scale-[1.02]">
+           <a href="#" className="group flex items-center px-4 py-3 min-h-[44px] rounded-xl text-sm font-medium text-gray-400 hover:bg-gray-700/50 hover:text-white transition-all duration-200 hover:scale-[1.02]">
                <LifeBuoy className="h-5 w-5 mr-3 group-hover:scale-110 transition-transform duration-200" />
                Support
            </a>
