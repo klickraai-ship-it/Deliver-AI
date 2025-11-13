@@ -23,7 +23,8 @@ import {
   type User,
   type Session,
 } from "@/shared/schema";
-import { eq, desc, inArray, and, sql } from "drizzle-orm";
+import * as schema from "@/shared/schema"; // Import schema to access notifications table
+import { eq, desc, inArray, and, sql, gte, or, isNull } from "drizzle-orm";
 import { setupTrackingRoutes } from "./tracking";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "crypto";
@@ -35,13 +36,13 @@ import { sanitizeEmailHtml, sanitizeEmailText, sanitizeSubject } from "./sanitiz
 // Middleware to validate session and extract userId
 async function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ message: "Unauthorized - No token provided" });
   }
-  
+
   const token = authHeader.substring(7);
-  
+
   try {
     const [session] = await db
       .select()
@@ -51,11 +52,11 @@ async function requireAuth(req: any, res: any, next: any) {
         sql`${sessions.expiresAt} > NOW()`
       ))
       .limit(1);
-    
+
     if (!session) {
       return res.status(401).json({ message: "Unauthorized - Invalid or expired token" });
     }
-    
+
     // Add userId to request for use in route handlers
     req.userId = session.userId;
     next();
@@ -71,52 +72,52 @@ function generateSessionToken(): string {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  
+
   setupTrackingRoutes(app);
-  
+
   // ========== AUTH API (Public - No Auth Required) ==========
-  
+
   // Sign up
   app.post("/api/auth/signup", async (req, res) => {
     try {
       const { email, password, name, companyName } = req.body;
-      
+
       // Validate input
       if (!email || !password || !name) {
         return res.status(400).json({ message: "Email, password, and name are required" });
       }
-      
+
       // Email validation
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
         return res.status(400).json({ message: "Invalid email format" });
       }
-      
+
       // Password strength check (min 8 chars, at least one letter and one number)
       if (password.length < 8) {
         return res.status(400).json({ message: "Password must be at least 8 characters long" });
       }
-      
+
       const hasLetter = /[a-zA-Z]/.test(password);
       const hasNumber = /[0-9]/.test(password);
       if (!hasLetter || !hasNumber) {
         return res.status(400).json({ message: "Password must contain at least one letter and one number" });
       }
-      
+
       // Check if user already exists
       const [existingUser] = await db
         .select()
         .from(users)
         .where(eq(users.email, email.toLowerCase()))
         .limit(1);
-      
+
       if (existingUser) {
         return res.status(409).json({ message: "Email already registered" });
       }
-      
+
       // Hash password
       const passwordHash = await bcrypt.hash(password, 10);
-      
+
       // Create user
       const [newUser] = await db
         .insert(users)
@@ -127,20 +128,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           companyName: companyName || null,
         })
         .returning();
-      
+
       // Create session
       const sessionToken = generateSessionToken();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-      
+
       await db.insert(sessions).values({
         userId: newUser.id,
         token: sessionToken,
         expiresAt,
       });
-      
+
       // Return user and token (excluding password hash)
       const { passwordHash: _, ...userWithoutPassword } = newUser;
-      
+
       res.status(201).json({
         user: userWithoutPassword,
         token: sessionToken,
@@ -150,47 +151,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to create account" });
     }
   });
-  
+
   // Login
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
-      
+
       if (!email || !password) {
         return res.status(400).json({ message: "Email and password are required" });
       }
-      
+
       // Find user
       const [user] = await db
         .select()
         .from(users)
         .where(eq(users.email, email.toLowerCase()))
         .limit(1);
-      
+
       if (!user) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
-      
+
       // Verify password
       const isValidPassword = await bcrypt.compare(password, user.passwordHash);
-      
+
       if (!isValidPassword) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
-      
+
       // Create session
       const sessionToken = generateSessionToken();
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-      
+
       await db.insert(sessions).values({
         userId: user.id,
         token: sessionToken,
         expiresAt,
       });
-      
+
       // Return user and token (excluding password hash)
       const { passwordHash: _, ...userWithoutPassword } = user;
-      
+
       res.json({
         user: userWithoutPassword,
         token: sessionToken,
@@ -200,24 +201,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to login" });
     }
   });
-  
+
   // Logout
   app.post("/api/auth/logout", requireAuth, async (req, res) => {
     try {
       const authHeader = req.headers.authorization;
       const token = authHeader?.substring(7);
-      
+
       if (token) {
         await db.delete(sessions).where(eq(sessions.token, token));
       }
-      
+
       res.json({ message: "Logged out successfully" });
     } catch (error) {
       console.error("Logout error:", error);
       res.status(500).json({ message: "Failed to logout" });
     }
   });
-  
+
   // Get current user
   app.get("/api/auth/me", requireAuth, async (req, res) => {
     try {
@@ -226,11 +227,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(users)
         .where(eq(users.id, (req as any).userId))
         .limit(1);
-      
+
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      
+
       const { passwordHash: _, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error) {
@@ -238,40 +239,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to get user" });
     }
   });
-  
+
   // ========== SUBSCRIBERS API ==========
-  
+
   // Get all subscribers
   app.get("/api/subscribers", requireAuth, async (req, res) => {
     try {
       const { status, list } = req.query;
       const userId = (req as any).userId;
-      
+
       let conditions = [eq(subscribers.userId, userId)];
-      
+
       if (status) {
         conditions.push(eq(subscribers.status, status as string));
       }
-      
+
       const results = await db
         .select()
         .from(subscribers)
         .where(and(...conditions))
         .orderBy(desc(subscribers.createdAt));
-      
+
       // Filter by list if provided
       let filteredResults = results;
       if (list) {
         filteredResults = results.filter(s => s.lists.includes(list as string));
       }
-      
+
       res.json(filteredResults);
     } catch (error) {
       console.error("Error fetching subscribers:", error);
       res.status(500).json({ message: "Failed to fetch subscribers" });
     }
   });
-  
+
   // Get single subscriber
   app.get("/api/subscribers/:id", requireAuth, async (req, res) => {
     try {
@@ -283,24 +284,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.id, req.params.id),
           eq(subscribers.userId, userId)
         ));
-      
+
       if (!subscriber) {
         return res.status(404).json({ message: "Subscriber not found" });
       }
-      
+
       res.json(subscriber);
     } catch (error) {
       console.error("Error fetching subscriber:", error);
       res.status(500).json({ message: "Failed to fetch subscriber" });
     }
   });
-  
+
   // Create subscriber
   app.post("/api/subscribers", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       const validatedData = insertSubscriberSchema.parse(req.body);
-      
+
       const [newSubscriber] = await db
         .insert(subscribers)
         .values({
@@ -308,21 +309,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId,
         })
         .returning();
-      
+
       res.status(201).json(newSubscriber);
     } catch (error) {
       console.error("Error creating subscriber:", error);
       res.status(400).json({ message: "Failed to create subscriber", error: String(error) });
     }
   });
-  
+
   // Update subscriber
   app.patch("/api/subscribers/:id", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       // Filter out protected/system fields to prevent userId reassignment and tenant breakout
       const { userId: _, id: __, createdAt: ___, updatedAt: ____, ...allowedUpdates } = req.body;
-      
+
       const [updated] = await db
         .update(subscribers)
         .set(allowedUpdates)
@@ -331,18 +332,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.userId, userId)
         ))
         .returning();
-      
+
       if (!updated) {
         return res.status(404).json({ message: "Subscriber not found" });
       }
-      
+
       res.json(updated);
     } catch (error) {
       console.error("Error updating subscriber:", error);
       res.status(500).json({ message: "Failed to update subscriber" });
     }
   });
-  
+
   // Delete subscriber
   app.delete("/api/subscribers/:id", requireAuth, async (req, res) => {
     try {
@@ -354,20 +355,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.userId, userId)
         ))
         .returning();
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Subscriber not found" });
       }
-      
+
       res.json({ message: "Subscriber deleted successfully" });
     } catch (error) {
       console.error("Error deleting subscriber:", error);
       res.status(500).json({ message: "Failed to delete subscriber" });
     }
   });
-  
+
   // ========== EMAIL TEMPLATES API ==========
-  
+
   // Get all templates
   app.get("/api/templates", requireAuth, async (req, res) => {
     try {
@@ -377,14 +378,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(emailTemplates)
         .where(eq(emailTemplates.userId, userId))
         .orderBy(desc(emailTemplates.createdAt));
-      
+
       res.json(templates);
     } catch (error) {
       console.error("Error fetching templates:", error);
       res.status(500).json({ message: "Failed to fetch templates" });
     }
   });
-  
+
   // Get single template
   app.get("/api/templates/:id", requireAuth, async (req, res) => {
     try {
@@ -396,24 +397,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(emailTemplates.id, req.params.id),
           eq(emailTemplates.userId, userId)
         ));
-      
+
       if (!template) {
         return res.status(404).json({ message: "Template not found" });
       }
-      
+
       res.json(template);
     } catch (error) {
       console.error("Error fetching template:", error);
       res.status(500).json({ message: "Failed to fetch template" });
     }
   });
-  
+
   // Create template
   app.post("/api/templates", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       const validatedData = insertEmailTemplateSchema.parse(req.body);
-      
+
       // Sanitize HTML content to prevent XSS attacks
       const sanitizedData = {
         ...validatedData,
@@ -421,7 +422,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         htmlContent: sanitizeEmailHtml(validatedData.htmlContent),
         textContent: validatedData.textContent ? sanitizeEmailText(validatedData.textContent) : undefined,
       };
-      
+
       const [newTemplate] = await db
         .insert(emailTemplates)
         .values({
@@ -429,21 +430,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId,
         })
         .returning();
-      
+
       res.status(201).json(newTemplate);
     } catch (error) {
       console.error("Error creating template:", error);
       res.status(400).json({ message: "Failed to create template", error: String(error) });
     }
   });
-  
+
   // Update template
   app.patch("/api/templates/:id", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       // Filter out protected/system fields to prevent userId reassignment and tenant breakout
       const { userId: _, id: __, createdAt: ___, updatedAt: ____, ...allowedUpdates } = req.body;
-      
+
       // Sanitize HTML content to prevent XSS attacks
       const sanitizedUpdates: any = { ...allowedUpdates };
       if (sanitizedUpdates.subject) {
@@ -455,7 +456,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (sanitizedUpdates.textContent) {
         sanitizedUpdates.textContent = sanitizeEmailText(sanitizedUpdates.textContent);
       }
-      
+
       const [updated] = await db
         .update(emailTemplates)
         .set(sanitizedUpdates)
@@ -464,18 +465,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(emailTemplates.userId, userId)
         ))
         .returning();
-      
+
       if (!updated) {
         return res.status(404).json({ message: "Template not found" });
       }
-      
+
       res.json(updated);
     } catch (error) {
       console.error("Error updating template:", error);
       res.status(500).json({ message: "Failed to update template" });
     }
   });
-  
+
   // Delete template
   app.delete("/api/templates/:id", requireAuth, async (req, res) => {
     try {
@@ -487,18 +488,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(emailTemplates.userId, userId)
         ))
         .returning();
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Template not found" });
       }
-      
+
       res.json({ message: "Template deleted successfully" });
     } catch (error) {
       console.error("Error deleting template:", error);
       res.status(500).json({ message: "Failed to delete template" });
     }
   });
-  
+
   // Duplicate template
   app.post("/api/templates/:id/duplicate", requireAuth, async (req, res) => {
     try {
@@ -510,11 +511,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(emailTemplates.id, req.params.id),
           eq(emailTemplates.userId, userId)
         ));
-      
+
       if (!original) {
         return res.status(404).json({ message: "Template not found" });
       }
-      
+
       const [duplicated] = await db
         .insert(emailTemplates)
         .values({
@@ -526,41 +527,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
           thumbnailUrl: original.thumbnailUrl,
         })
         .returning();
-      
+
       res.status(201).json(duplicated);
     } catch (error) {
       console.error("Error duplicating template:", error);
       res.status(500).json({ message: "Failed to duplicate template" });
     }
   });
-  
+
   // ========== CAMPAIGNS API ==========
-  
+
   // Get all campaigns
   app.get("/api/campaigns", requireAuth, async (req, res) => {
     try {
       const { status } = req.query;
       const userId = (req as any).userId;
-      
+
       let conditions = [eq(campaigns.userId, userId)];
-      
+
       if (status) {
         conditions.push(eq(campaigns.status, status as string));
       }
-      
+
       const results = await db
         .select()
         .from(campaigns)
         .where(and(...conditions))
         .orderBy(desc(campaigns.createdAt));
-      
+
       res.json(results);
     } catch (error) {
       console.error("Error fetching campaigns:", error);
       res.status(500).json({ message: "Failed to fetch campaigns" });
     }
   });
-  
+
   // Get single campaign with analytics
   app.get("/api/campaigns/:id", requireAuth, async (req, res) => {
     try {
@@ -572,11 +573,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaigns.id, req.params.id),
           eq(campaigns.userId, userId)
         ));
-      
+
       if (!campaign) {
         return res.status(404).json({ message: "Campaign not found" });
       }
-      
+
       // Get analytics
       const [analytics] = await db
         .select()
@@ -585,7 +586,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaignAnalytics.campaignId, req.params.id),
           eq(campaignAnalytics.userId, userId)
         ));
-      
+
       // Get template if exists
       let template = null;
       if (campaign.templateId) {
@@ -598,19 +599,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ));
         template = tmpl;
       }
-      
+
       res.json({ ...campaign, analytics, template });
     } catch (error) {
       console.error("Error fetching campaign:", error);
       res.status(500).json({ message: "Failed to fetch campaign" });
     }
   });
-  
+
   // Create campaign
   app.post("/api/campaigns", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
-      
+
       // PREFLIGHT CHECK: Ensure SES is configured before allowing campaign creation
       const isConfigured = await emailService.isConfigured(userId);
       if (!isConfigured) {
@@ -620,14 +621,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           action: "configure_ses"
         });
       }
-      
+
       const validatedData = insertCampaignSchema.parse(req.body);
-      
+
       const campaignData: any = {
         ...validatedData,
         userId,
       };
-      
+
       // Convert date strings to Date objects if present
       if (campaignData.scheduledAt) {
         campaignData.scheduledAt = new Date(campaignData.scheduledAt);
@@ -635,32 +636,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (campaignData.sentAt) {
         campaignData.sentAt = new Date(campaignData.sentAt);
       }
-      
+
       const [newCampaign] = await db
         .insert(campaigns)
         .values(campaignData)
         .returning();
-      
+
       // Create initial analytics record
       await db.insert(campaignAnalytics).values({
         userId,
         campaignId: newCampaign.id,
       });
-      
+
       res.status(201).json(newCampaign);
     } catch (error) {
       console.error("Error creating campaign:", error);
       res.status(400).json({ message: "Failed to create campaign", error: String(error) });
     }
   });
-  
+
   // Update campaign
   app.patch("/api/campaigns/:id", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       // Filter out protected/system fields to prevent userId reassignment and tenant breakout
       const { userId: _, id: __, createdAt: ___, updatedAt: ____, sentAt: _____, ...allowedUpdates } = req.body;
-      
+
       const [updated] = await db
         .update(campaigns)
         .set(allowedUpdates)
@@ -669,23 +670,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaigns.userId, userId)
         ))
         .returning();
-      
+
       if (!updated) {
         return res.status(404).json({ message: "Campaign not found" });
       }
-      
+
       res.json(updated);
     } catch (error) {
       console.error("Error updating campaign:", error);
       res.status(500).json({ message: "Failed to update campaign" });
     }
   });
-  
+
   // Delete campaign
   app.delete("/api/campaigns/:id", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
-      
+
       // Delete related records first (filtering by userId for security)
       await db.delete(campaignSubscribers).where(and(
         eq(campaignSubscribers.campaignId, req.params.id),
@@ -695,7 +696,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         eq(campaignAnalytics.campaignId, req.params.id),
         eq(campaignAnalytics.userId, userId)
       ));
-      
+
       const [deleted] = await db
         .delete(campaigns)
         .where(and(
@@ -703,18 +704,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaigns.userId, userId)
         ))
         .returning();
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Campaign not found" });
       }
-      
+
       res.json({ message: "Campaign deleted successfully" });
     } catch (error) {
       console.error("Error deleting campaign:", error);
       res.status(500).json({ message: "Failed to delete campaign" });
     }
   });
-  
+
   // Get campaign analytics
   app.get("/api/campaigns/:id/analytics", requireAuth, async (req, res) => {
     try {
@@ -726,11 +727,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaignAnalytics.campaignId, req.params.id),
           eq(campaignAnalytics.userId, userId)
         ));
-      
+
       if (!analytics) {
         return res.status(404).json({ message: "Campaign analytics not found" });
       }
-      
+
       const clicksData = await db
         .select({
           url: linkClicks.url,
@@ -743,7 +744,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ))
         .groupBy(linkClicks.url)
         .orderBy(sql`count(*) DESC`);
-      
+
       // Get web version views analytics
       const webVersionViewsData = await db
         .select({
@@ -756,10 +757,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(webVersionViews.userId, userId)
         ))
         .orderBy(desc(webVersionViews.viewedAt));
-      
+
       const totalWebVersionViews = webVersionViewsData.length;
       const uniqueWebVersionViewers = new Set(webVersionViewsData.map(v => v.subscriberId)).size;
-      
+
       res.json({
         ...analytics,
         linkClicks: clicksData,
@@ -772,11 +773,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch campaign analytics" });
     }
   });
-  
+
   // ========== DASHBOARD DATA API ==========
-  
-  // Get dashboard summary
-  app.get("/api/dashboard", requireAuth, async (req, res) => {
+
+  // Notifications endpoints
+  app.get('/api/notifications', requireAuth, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+
+      const notifications = await db
+        .select()
+        .from(schema.notifications)
+        .where(eq(schema.notifications.userId, userId))
+        .orderBy(desc(schema.notifications.createdAt))
+        .limit(50);
+
+      res.json(notifications.map(n => ({
+        id: n.id,
+        type: n.type,
+        message: n.message,
+        timestamp: n.createdAt,
+        read: n.read
+      })));
+    } catch (error) {
+      console.error('Failed to fetch notifications:', error);
+      res.status(500).json({ message: 'Failed to fetch notifications' });
+    }
+  });
+
+  app.patch('/api/notifications/:id/read', requireAuth, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { id } = req.params;
+
+      await db
+        .update(schema.notifications)
+        .set({ read: true })
+        .where(
+          and(
+            eq(schema.notifications.id, id),
+            eq(schema.notifications.userId, userId)
+          )
+        );
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+      res.status(500).json({ message: 'Failed to update notification' });
+    }
+  });
+
+  app.patch('/api/notifications/read-all', requireAuth, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+
+      await db
+        .update(schema.notifications)
+        .set({ read: true })
+        .where(eq(schema.notifications.userId, userId));
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error);
+      res.status(500).json({ message: 'Failed to update notifications' });
+    }
+  });
+
+  // Dashboard endpoint
+  app.get('/api/dashboard', requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       // Get recent campaigns analytics
@@ -789,19 +853,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ))
         .orderBy(desc(campaigns.sentAt))
         .limit(10);
-      
+
       let totalDelivered = 0;
       let totalBounced = 0;
       let totalComplained = 0;
       let totalUnsubscribed = 0;
       let totalSent = 0;
-      
+
       for (const campaign of recentCampaigns) {
         const [analytics] = await db
           .select()
           .from(campaignAnalytics)
           .where(eq(campaignAnalytics.campaignId, campaign.id));
-        
+
         if (analytics) {
           totalSent += analytics.sent;
           totalDelivered += analytics.delivered;
@@ -810,13 +874,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           totalUnsubscribed += analytics.unsubscribed;
         }
       }
-      
+
       // Calculate KPIs
       const deliveryRate = totalSent > 0 ? ((totalDelivered / totalSent) * 100).toFixed(1) : '0.0';
       const bounceRate = totalSent > 0 ? ((totalBounced / totalSent) * 100).toFixed(2) : '0.00';
       const complaintRate = totalDelivered > 0 ? ((totalComplained / totalDelivered) * 100).toFixed(2) : '0.00';
       const unsubscribeRate = totalDelivered > 0 ? ((totalUnsubscribed / totalDelivered) * 100).toFixed(2) : '0.00';
-      
+
       const dashboardData = {
         kpis: [
           { title: 'Delivery Rate', value: `${deliveryRate}%`, change: '+0.1%', changeType: 'increase' as const, period: 'vs last 7d' },
@@ -840,21 +904,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { id: 'fbl', name: 'Feedback Loops', status: 'fail' as const, details: 'Yahoo CFL not configured. Complaints may be missed.', fixLink: '#' },
         ],
       };
-      
+
       res.json(dashboardData);
     } catch (error) {
       console.error("Error fetching dashboard data:", error);
       res.status(500).json({ message: "Failed to fetch dashboard data" });
     }
   });
-  
+
   // ========== CAMPAIGN SENDING API ==========
-  
+
   app.post("/api/campaigns/:id/send", requireAuth, async (req, res) => {
     try {
       const campaignId = req.params.id;
       const userId = (req as any).userId;
-      
+
       // PREFLIGHT CHECK: Ensure SES is configured before allowing email sending
       const isConfigured = await emailService.isConfigured(userId);
       if (!isConfigured) {
@@ -864,7 +928,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           action: "configure_ses"
         });
       }
-      
+
       const [campaign] = await db
         .select()
         .from(campaigns)
@@ -873,17 +937,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaigns.userId, userId)
         ))
         .limit(1);
-      
+
       if (!campaign) {
         return res.status(404).json({ message: "Campaign not found" });
       }
-      
+
       if (campaign.status === 'sent') {
         return res.status(400).json({ message: "Campaign has already been sent" });
       }
-      
+
       let emailContent = { subject: campaign.subject, htmlContent: '', textContent: '' };
-      
+
       if (campaign.templateId) {
         const [template] = await db
           .select()
@@ -893,7 +957,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(emailTemplates.userId, userId)
           ))
           .limit(1);
-        
+
         if (template) {
           emailContent.htmlContent = template.htmlContent;
           emailContent.textContent = template.textContent || '';
@@ -901,7 +965,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         emailContent.htmlContent = '<html><body><p>Default email content</p></body></html>';
       }
-      
+
       let targetSubscribers = await db
         .select()
         .from(subscribers)
@@ -910,17 +974,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.confirmed, true), // Only send to confirmed subscribers (double opt-in)
           eq(subscribers.userId, userId)
         ));
-      
+
       if (campaign.lists.length > 0) {
         targetSubscribers = targetSubscribers.filter(sub => 
           sub.lists.some(list => campaign.lists.includes(list))
         );
       }
-      
+
       if (targetSubscribers.length === 0) {
         return res.status(400).json({ message: "No active subscribers found for this campaign" });
       }
-      
+
       for (const subscriber of targetSubscribers) {
         await db.insert(campaignSubscribers).values({
           userId,
@@ -929,7 +993,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           status: 'pending',
         }).onConflictDoNothing();
       }
-      
+
       await db
         .update(campaigns)
         .set({ status: 'sending' })
@@ -937,43 +1001,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaigns.id, campaignId),
           eq(campaigns.userId, userId)
         ));
-      
+
       res.json({
         message: "Campaign sending started",
         recipientCount: targetSubscribers.length,
         status: 'sending',
       });
-      
+
       const trackingDomain = process.env.REPL_SLUG 
         ? `https://${process.env.REPL_SLUG}.${process.env.REPLIT_DEV_DOMAIN}`
         : 'http://localhost:5000';
-      
+
       setImmediate(async () => {
         try {
           const { EmailTrackingService, BatchEmailProcessor } = await import('./emailService');
           const trackingService = new EmailTrackingService(trackingDomain);
           const batchProcessor = new BatchEmailProcessor(100, 1000);
-          
+
           let sentCount = 0;
           let failedCount = 0;
-          
-          for (const subscriber of targetSubscribers) {
+          const recipients = targetSubscribers; // Assign to recipients for notification service
+
+          for (const subscriber of recipients) {
             try {
               const processedContentBase = {
                 subject: trackingService.replaceMergeTags(emailContent.subject, subscriber),
                 htmlContent: trackingService.replaceMergeTags(emailContent.htmlContent, subscriber),
                 textContent: emailContent.textContent,
               };
-              
+
               const processedContent = trackingService.processEmailForTracking(processedContentBase, {
                 campaignId: campaign.id,
                 subscriberId: subscriber.id,
                 trackingDomain,
                 userId: campaign.userId,
               });
-              
+
               console.log(`Sending email to ${subscriber.email} for campaign ${campaign.id}`);
-              
+
               await emailService.sendEmail({
                 to: subscriber.email,
                 from: campaign.fromEmail,
@@ -984,14 +1049,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 text: processedContent.textContent,
                 userId: campaign.userId,
               });
-              
+
               await db.execute(sql`
                 UPDATE campaign_subscribers
                 SET status = 'sent', sent_at = NOW(), html_content = ${processedContent.htmlContent}
                 WHERE campaign_id = ${campaign.id}
                 AND subscriber_id = ${subscriber.id}
               `);
-              
+
               sentCount++;
             } catch (error) {
               console.error(`Failed to send email to ${subscriber.email}:`, error);
@@ -1004,7 +1069,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               failedCount++;
             }
           }
-          
+
           await db
             .update(campaigns)
             .set({ 
@@ -1012,11 +1077,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               sentAt: new Date(),
             })
             .where(eq(campaigns.id, campaignId));
-          
+
           await db.insert(campaignAnalytics).values({
             userId: campaign.userId,
             campaignId: campaign.id,
-            totalSubscribers: targetSubscribers.length,
+            totalSubscribers: recipients.length,
             sent: sentCount,
             delivered: sentCount,
             failed: failedCount,
@@ -1028,8 +1093,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               failed: failedCount,
             },
           });
-          
+
           console.log(`Campaign ${campaignId} completed: ${sentCount} sent, ${failedCount} failed`);
+
+          // Create notification
+          const { notifyCampaignSent } = await import('./notificationService');
+          const recipientCount = recipients.length;
+          await notifyCampaignSent(userId, campaign.name || 'Untitled Campaign', recipientCount);
+
         } catch (error) {
           console.error(`Error in background campaign send:`, error);
           await db
@@ -1038,18 +1109,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .where(eq(campaigns.id, campaignId));
         }
       });
-      
+
     } catch (error) {
       console.error("Error starting campaign send:", error);
       res.status(500).json({ message: "Failed to start campaign send" });
     }
   });
-  
+
   app.get("/api/campaigns/:id/analytics/clicks", requireAuth, async (req, res) => {
     try {
       const campaignId = req.params.id;
       const userId = (req as any).userId;
-      
+
       const clicks = await db
         .select()
         .from(linkClicks)
@@ -1058,7 +1129,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(linkClicks.userId, userId)
         ))
         .orderBy(desc(linkClicks.clickedAt));
-      
+
       const linkStats = clicks.reduce((acc, click) => {
         if (!acc[click.url]) {
           acc[click.url] = { url: click.url, clicks: 0, uniqueClicks: new Set() };
@@ -1067,13 +1138,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         acc[click.url].uniqueClicks.add(click.subscriberId);
         return acc;
       }, {} as Record<string, { url: string; clicks: number; uniqueClicks: Set<string> }>);
-      
+
       const linkStatsArray = Object.values(linkStats).map(stat => ({
         url: stat.url,
         totalClicks: stat.clicks,
         uniqueClicks: stat.uniqueClicks.size,
       }));
-      
+
       res.json({
         campaignId,
         totalClicks: clicks.length,
@@ -1086,27 +1157,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch click analytics" });
     }
   });
-  
+
   // ========== SETTINGS API ==========
-  
+
   // Get all settings
   app.get("/api/settings", requireAuth, async (req, res) => {
     try {
       const allSettings = await db.select().from(settings);
-      
+
       // Convert to key-value object
       const settingsObj = allSettings.reduce((acc, setting) => {
         acc[setting.key] = setting.value;
         return acc;
       }, {} as Record<string, any>);
-      
+
       res.json(settingsObj);
     } catch (error) {
       console.error("Error fetching settings:", error);
       res.status(500).json({ message: "Failed to fetch settings" });
     }
   });
-  
+
   // Get single setting
   app.get("/api/settings/:key", requireAuth, async (req, res) => {
     try {
@@ -1114,28 +1185,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .select()
         .from(settings)
         .where(eq(settings.key, req.params.key));
-      
+
       if (!setting) {
         return res.status(404).json({ message: "Setting not found" });
       }
-      
+
       res.json(setting);
     } catch (error) {
       console.error("Error fetching setting:", error);
       res.status(500).json({ message: "Failed to fetch setting" });
     }
   });
-  
+
   // Update or create setting
   app.put("/api/settings/:key", requireAuth, async (req, res) => {
     try {
       const { value } = req.body;
-      
+
       const [existing] = await db
         .select()
         .from(settings)
         .where(eq(settings.key, req.params.key));
-      
+
       if (existing) {
         const [updated] = await db
           .update(settings)
@@ -1144,7 +1215,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .where(eq(settings.key, req.params.key))
           .returning();
-        
+
         res.json(updated);
       } else {
         const [created] = await db
@@ -1154,7 +1225,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             value,
           })
           .returning();
-        
+
         res.status(201).json(created);
       }
     } catch (error) {
@@ -1162,7 +1233,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to update setting" });
     }
   });
-  
+
   // Delete setting
   app.delete("/api/settings/:key", requireAuth, async (req, res) => {
     try {
@@ -1170,11 +1241,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .delete(settings)
         .where(eq(settings.key, req.params.key))
         .returning();
-      
+
       if (!deleted) {
         return res.status(404).json({ message: "Setting not found" });
       }
-      
+
       res.json({ message: "Setting deleted successfully" });
     } catch (error) {
       console.error("Error deleting setting:", error);
@@ -1183,25 +1254,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== PUBLIC SUBSCRIBER API (No Auth Required) ==========
-  
+
   // Public subscribe endpoint with double opt-in
   app.post("/api/public/subscribe", subscribeRateLimiter, async (req, res) => {
     try {
       const { email, firstName, lastName, lists } = req.body;
       const crypto = await import('crypto');
-      
+
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
       }
-      
+
       // For now, assign to a default user (in production, this would be based on form/domain)
       // You can enhance this to accept a userId or API key in the request
       const defaultUserId = req.body.userId; // Passed from embedded form
-      
+
       if (!defaultUserId) {
         return res.status(400).json({ message: "userId is required for subscription" });
       }
-      
+
       // Check if subscriber already exists
       const [existing] = await db
         .select()
@@ -1210,7 +1281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.email, email.toLowerCase()),
           eq(subscribers.userId, defaultUserId)
         ));
-      
+
       if (existing) {
         // If already confirmed AND active, just return success
         if (existing.confirmed && existing.status === 'active') {
@@ -1219,7 +1290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             alreadyConfirmed: true 
           });
         }
-        
+
         // If unsubscribed or not confirmed, start new confirmation flow
         const confirmationToken = crypto.randomBytes(32).toString('hex');
         const [updated] = await db
@@ -1237,12 +1308,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .where(eq(subscribers.id, existing.id))
           .returning();
-        
+
         // Send confirmation email
         try {
           const { emailService } = await import('./emailProvider');
           const confirmationUrl = `${req.protocol}://${req.get('host')}/api/public/confirm/${confirmationToken}`;
-          
+
           await emailService.sendEmail({
             userId: defaultUserId,
             to: email.toLowerCase(),
@@ -1270,13 +1341,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error('Failed to send confirmation email:', emailError);
           // Continue anyway - subscriber created, they can try subscribing again
         }
-        
+
         return res.json({ 
           message: "Confirmation email resent! Please check your inbox.", 
           requiresConfirmation: true 
         });
       }
-      
+
       // Create new subscriber with confirmation token
       const confirmationToken = crypto.randomBytes(32).toString('hex');
       const [newSubscriber] = await db
@@ -1295,12 +1366,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           confirmationSentAt: new Date(),
         })
         .returning();
-      
+
       // Send confirmation email
       try {
         const { emailService } = await import('./emailProvider');
         const confirmationUrl = `${req.protocol}://${req.get('host')}/api/public/confirm/${confirmationToken}`;
-        
+
         await emailService.sendEmail({
           userId: defaultUserId,
           to: email.toLowerCase(),
@@ -1328,7 +1399,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('Failed to send confirmation email:', emailError);
         // Continue anyway - subscriber created, they can try subscribing again
       }
-      
+
       res.status(201).json({ 
         message: "Please check your email to confirm your subscription!", 
         requiresConfirmation: true 
@@ -1338,12 +1409,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to subscribe" });
     }
   });
-  
+
   // Email confirmation endpoint
   app.get("/api/public/confirm/:token", async (req, res) => {
     try {
       const { token } = req.params;
-      
+
       if (!token || token.length !== 64) {
         return res.status(400).send(`
           <html>
@@ -1354,13 +1425,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </html>
         `);
       }
-      
+
       // Find subscriber by confirmation token
       const [subscriber] = await db
         .select()
         .from(subscribers)
         .where(eq(subscribers.confirmationToken, token));
-      
+
       if (!subscriber) {
         return res.status(404).send(`
           <html>
@@ -1372,7 +1443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </html>
         `);
       }
-      
+
       // Check if token is expired (7 days)
       const confirmationSentAt = subscriber.confirmationSentAt;
       if (confirmationSentAt) {
@@ -1389,7 +1460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `);
         }
       }
-      
+
       // Mark subscriber as confirmed
       const [updated] = await db
         .update(subscribers)
@@ -1400,7 +1471,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .where(eq(subscribers.id, subscriber.id))
         .returning();
-      
+
       res.send(`
         <html>
           <head>
@@ -1431,16 +1502,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
     }
   });
-  
+
   // Unsubscribe endpoint (token-based, no auth required)
   app.get("/api/public/unsubscribe/:token", unsubscribeRateLimiter, async (req, res) => {
     try {
       const { token } = req.params;
-      
+
       // Decode and validate HMAC-signed token
       const { EmailTrackingService } = await import("./emailService");
       const decoded = EmailTrackingService.decodeUnsubscribeToken(token);
-      
+
       if (!decoded) {
         return res.status(400).send(`
           <html>
@@ -1451,9 +1522,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </html>
         `);
       }
-      
+
       const { subscriberId, userId } = decoded;
-      
+
       // SECURITY: Require userId for multi-tenant isolation
       // Legacy tokens without userId are rejected - all new tokens must include userId
       if (!userId) {
@@ -1466,7 +1537,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </html>
         `);
       }
-      
+
       // Update subscriber status with multi-tenant verification
       const [updated] = await db
         .update(subscribers)
@@ -1476,7 +1547,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.userId, userId)
         ))
         .returning();
-      
+
       if (!updated) {
         return res.status(404).send(`
           <html>
@@ -1487,7 +1558,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </html>
         `);
       }
-      
+
       res.send(`
         <html>
           <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
@@ -1509,16 +1580,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       `);
     }
   });
-  
+
   // View email in browser (web version)
   app.get("/api/public/view/:token", publicEndpointLimiter, async (req, res) => {
     try {
       const { token } = req.params;
-      
+
       // Decode and validate HMAC-signed token
       const { EmailTrackingService } = await import("./emailService");
       const decoded = EmailTrackingService.decodeWebVersionToken(token);
-      
+
       if (!decoded) {
         return res.status(400).send(`
           <html>
@@ -1529,9 +1600,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           </html>
         `);
       }
-      
+
       const { campaignId, subscriberId, userId } = decoded;
-      
+
       // Track web version view
       await db.insert(webVersionViews).values({
         userId,
@@ -1540,7 +1611,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ipAddress: req.ip || req.headers['x-forwarded-for']?.toString().split(',')[0].trim() || null,
         userAgent: req.get('user-agent') || null,
       });
-      
+
       // Fetch campaign with template
       const [campaign] = await db
         .select()
@@ -1549,11 +1620,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(campaigns.id, campaignId),
           eq(campaigns.userId, userId)
         ));
-      
+
       if (!campaign) {
         return res.status(404).send("<h1>Campaign not found</h1>");
       }
-      
+
       // Fetch template
       const [template] = await db
         .select()
@@ -1562,11 +1633,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(emailTemplates.id, campaign.templateId),
           eq(emailTemplates.userId, userId)
         ));
-      
+
       if (!template) {
         return res.status(404).send("<h1>Email template not found</h1>");
       }
-      
+
       // Fetch subscriber for personalization
       const [subscriber] = await db
         .select()
@@ -1575,32 +1646,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
           eq(subscribers.id, subscriberId),
           eq(subscribers.userId, userId)
         ));
-      
+
       // Replace merge tags
       let htmlContent = template.htmlContent;
-      
+
       // Generate unsubscribe URL with HMAC token
       const trackingService = new EmailTrackingService(`${req.protocol}://${req.get('host')}`);
       const unsubToken = trackingService['generateUnsubscribeToken'](subscriberId);
       const unsubscribeUrl = `${req.protocol}://${req.get('host')}/api/public/unsubscribe/${unsubToken}`;
-      
+
       // Use trackingService for consistent merge tag replacement (camelCase format)
       if (subscriber) {
         htmlContent = trackingService.replaceMergeTags(htmlContent, subscriber);
       }
-      
+
       // Replace campaign-specific merge tags
       htmlContent = htmlContent
         .replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl)
         .replace(/\{\{campaign_name\}\}/g, campaign.name || '');
-      
+
       // Add web version banner at the top
       const banner = `
         <div style="background: #f8f9fa; padding: 10px; text-align: center; font-family: Arial, sans-serif; font-size: 12px; color: #6c757d; border-bottom: 1px solid #dee2e6;">
           📧 Viewing web version of "${template.name}"
         </div>
       `;
-      
+
       res.send(banner + htmlContent);
     } catch (error) {
       console.error("Error in web version:", error);
@@ -1609,18 +1680,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ========== EMAIL PROVIDER INTEGRATIONS API ==========
-  
+
   // Get user's email provider integration
   app.get("/api/settings/email-provider", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       const { emailProviderIntegrations } = await import('./db');
-      
+
       const [integration] = await db
         .select()
         .from(emailProviderIntegrations)
         .where(eq(emailProviderIntegrations.userId, userId));
-      
+
       if (!integration) {
         // Return null provider to indicate unconfigured state (SES-only enforcement)
         // UI should display "configure SES" message instead of showing Resend as default
@@ -1632,11 +1703,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           message: "Email provider not configured. Please configure AWS SES to send emails."
         });
       }
-      
+
       // Decrypt credentials from database
       const config = integration.config as any;
       const decryptedConfig = decryptObject(config);
-      
+
       // Don't send sensitive credentials to frontend
       const safeConfig = {
         ...decryptedConfig,
@@ -1645,7 +1716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sendgridApiKey: decryptedConfig.sendgridApiKey ? '***HIDDEN***' : undefined,
         mailgunApiKey: decryptedConfig.mailgunApiKey ? '***HIDDEN***' : undefined,
       };
-      
+
       res.json({
         ...integration,
         config: safeConfig,
@@ -1655,14 +1726,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch integration" });
     }
   });
-  
+
   // Create or update email provider integration
   app.post("/api/settings/email-provider", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       const { provider, isActive, config } = req.body;
       const { emailProviderIntegrations, insertEmailProviderIntegrationSchema } = await import('./db');
-      
+
       // RUNTIME VALIDATION: ONLY AWS SES is supported for per-user credentials
       // Check before Zod validation to provide friendlier error message
       // Reject ALL non-SES providers regardless of config payload to prevent:
@@ -1680,38 +1751,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
             : `${providerName} integration not implemented`
         });
       }
-      
+
       // Validate input (this will also enforce 'ses' via Zod schema)
       const validatedData = insertEmailProviderIntegrationSchema.parse({
         provider,
         isActive,
         config,
       });
-      
+
       // Check if integration already exists
       const [existing] = await db
         .select()
         .from(emailProviderIntegrations)
         .where(eq(emailProviderIntegrations.userId, userId));
-      
+
       if (existing) {
         // Update existing integration
         // Merge configs to preserve existing credentials if not provided in the update
         const existingConfig = existing.config as any || {};
         const newConfig = validatedData.config as any || {};
-        
+
         // Decrypt existing config to merge with new values
         const decryptedExisting = decryptObject(existingConfig);
-        
+
         const mergedConfig = {
           awsAccessKeyId: newConfig.awsAccessKeyId || decryptedExisting.awsAccessKeyId,
           awsSecretAccessKey: newConfig.awsSecretAccessKey || decryptedExisting.awsSecretAccessKey,
           awsRegion: newConfig.awsRegion || decryptedExisting.awsRegion,
         };
-        
+
         // Encrypt the merged config before saving
         const encryptedConfig = encryptObject(mergedConfig);
-        
+
         const [updated] = await db
           .update(emailProviderIntegrations)
           .set({
@@ -1722,13 +1793,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .where(eq(emailProviderIntegrations.userId, userId))
           .returning();
-        
+
         res.json({ message: "Integration updated successfully", integration: updated });
       } else {
         // Create new integration
         // Encrypt credentials before saving
         const encryptedConfig = encryptObject(validatedData.config as any);
-        
+
         const [created] = await db
           .insert(emailProviderIntegrations)
           .values({
@@ -1738,7 +1809,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             config: encryptedConfig as any,
           })
           .returning();
-        
+
         res.json({ message: "Integration created successfully", integration: created });
       }
     } catch (error) {
@@ -1746,17 +1817,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to save integration" });
     }
   });
-  
+
   // Delete email provider integration
   app.delete("/api/settings/email-provider", requireAuth, async (req, res) => {
     try {
       const userId = (req as any).userId;
       const { emailProviderIntegrations } = await import('./db');
-      
+
       await db
         .delete(emailProviderIntegrations)
         .where(eq(emailProviderIntegrations.userId, userId));
-      
+
       res.json({ message: "Integration deleted successfully" });
     } catch (error) {
       console.error("Error deleting email provider integration:", error);

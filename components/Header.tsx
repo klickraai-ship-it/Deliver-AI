@@ -38,43 +38,82 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout, onToggleMobileMenu }) =
   }, [showNotifications]);
 
   useEffect(() => {
-    // Load mock notifications (replace with API call later)
-    const mockNotifications: Notification[] = [
-      {
-        id: '1',
-        type: 'campaign_sent',
-        message: 'Campaign "Summer Sale" sent to 1,234 subscribers',
-        timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-        read: false
-      },
-      {
-        id: '2',
-        type: 'bounce',
-        message: '3 emails bounced in campaign "Newsletter #45"',
-        timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-        read: false
-      },
-      {
-        id: '3',
-        type: 'info',
-        message: 'Your deliverability score improved by 5%',
-        timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-        read: true
+    // Fetch notifications from API
+    const fetchNotifications = async () => {
+      try {
+        const response = await fetch('/api/notifications');
+        if (response.ok) {
+          const data = await response.json();
+          setNotifications(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch notifications:', error);
+        // Fallback to mock data if API fails
+        const mockNotifications: Notification[] = [
+          {
+            id: '1',
+            type: 'campaign_sent',
+            message: 'Campaign "Summer Sale" sent to 1,234 subscribers',
+            timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
+            read: false
+          },
+          {
+            id: '2',
+            type: 'bounce',
+            message: '3 emails bounced in campaign "Newsletter #45"',
+            timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+            read: false
+          },
+          {
+            id: '3',
+            type: 'info',
+            message: 'Your deliverability score improved by 5%',
+            timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+            read: true
+          }
+        ];
+        setNotifications(mockNotifications);
       }
-    ];
-    setNotifications(mockNotifications);
+    };
+
+    fetchNotifications();
+    
+    // Poll for new notifications every 30 seconds
+    const interval = setInterval(fetchNotifications, 30000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const markAsRead = (id: string) => {
+  const markAsRead = async (id: string) => {
+    // Optimistically update UI
     setNotifications(prev => 
       prev.map(n => n.id === id ? { ...n, read: true } : n)
     );
+    
+    // Update on server
+    try {
+      await fetch(`/api/notifications/${id}/read`, {
+        method: 'PATCH',
+      });
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+    }
   };
 
-  const markAllAsRead = () => {
+  const markAllAsRead = async () => {
+    // Optimistically update UI
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    
+    // Update on server
+    try {
+      await fetch('/api/notifications/read-all', {
+        method: 'PATCH',
+      });
+    } catch (error) {
+      console.error('Failed to mark all notifications as read:', error);
+    }
   };
 
   const getNotificationIcon = (type: Notification['type']) => {
