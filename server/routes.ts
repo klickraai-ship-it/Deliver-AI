@@ -983,6 +983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 campaignId: campaign.id,
                 subscriberId: subscriber.id,
                 trackingDomain,
+                userId: campaign.userId,
               });
               
               console.log(`Sending email to ${subscriber.email} for campaign ${campaign.id}`);
@@ -1181,6 +1182,242 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error deleting setting:", error);
       res.status(500).json({ message: "Failed to delete setting" });
+    }
+  });
+
+  // ========== PUBLIC SUBSCRIBER API (No Auth Required) ==========
+  
+  // Public subscribe endpoint
+  app.post("/api/public/subscribe", async (req, res) => {
+    try {
+      const { email, firstName, lastName, lists } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+      
+      // For now, assign to a default user (in production, this would be based on form/domain)
+      // You can enhance this to accept a userId or API key in the request
+      const defaultUserId = req.body.userId; // Passed from embedded form
+      
+      if (!defaultUserId) {
+        return res.status(400).json({ message: "userId is required for subscription" });
+      }
+      
+      // Check if subscriber already exists
+      const [existing] = await db
+        .select()
+        .from(subscribers)
+        .where(and(
+          eq(subscribers.email, email.toLowerCase()),
+          eq(subscribers.userId, defaultUserId)
+        ));
+      
+      if (existing) {
+        // Update existing subscriber to resubscribe if they were unsubscribed
+        const [updated] = await db
+          .update(subscribers)
+          .set({
+            status: 'active',
+            firstName: firstName || existing.firstName,
+            lastName: lastName || existing.lastName,
+            lists: lists || existing.lists,
+            consentGiven: true,
+            consentTimestamp: new Date(),
+          })
+          .where(eq(subscribers.id, existing.id))
+          .returning();
+        
+        return res.json({ message: "Successfully resubscribed", subscriber: updated });
+      }
+      
+      // Create new subscriber
+      const [newSubscriber] = await db
+        .insert(subscribers)
+        .values({
+          userId: defaultUserId,
+          email: email.toLowerCase(),
+          firstName,
+          lastName,
+          status: 'active',
+          lists: lists || [],
+          consentGiven: true,
+          consentTimestamp: new Date(),
+        })
+        .returning();
+      
+      res.status(201).json({ message: "Successfully subscribed", subscriber: newSubscriber });
+    } catch (error) {
+      console.error("Error in public subscribe:", error);
+      res.status(500).json({ message: "Failed to subscribe" });
+    }
+  });
+  
+  // Unsubscribe endpoint (token-based, no auth required)
+  app.get("/api/public/unsubscribe/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      
+      // Decode and validate HMAC-signed token
+      const { EmailTrackingService } = await import("./emailService");
+      const decoded = EmailTrackingService.decodeUnsubscribeToken(token);
+      
+      if (!decoded) {
+        return res.status(400).send(`
+          <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+              <h1 style="color: #e74c3c;">Invalid Unsubscribe Link</h1>
+              <p>This unsubscribe link is invalid or has expired.</p>
+            </body>
+          </html>
+        `);
+      }
+      
+      const { subscriberId, userId } = decoded;
+      
+      // SECURITY: Require userId for multi-tenant isolation
+      // Legacy tokens without userId are rejected - all new tokens must include userId
+      if (!userId) {
+        return res.status(400).send(`
+          <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+              <h1 style="color: #e74c3c;">Invalid Unsubscribe Link</h1>
+              <p>This unsubscribe link is invalid. Please use the unsubscribe link from a recent email.</p>
+            </body>
+          </html>
+        `);
+      }
+      
+      // Update subscriber status with multi-tenant verification
+      const [updated] = await db
+        .update(subscribers)
+        .set({ status: 'unsubscribed' })
+        .where(and(
+          eq(subscribers.id, subscriberId),
+          eq(subscribers.userId, userId)
+        ))
+        .returning();
+      
+      if (!updated) {
+        return res.status(404).send(`
+          <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+              <h1 style="color: #e74c3c;">Subscriber Not Found</h1>
+              <p>We couldn't find your subscription.</p>
+            </body>
+          </html>
+        `);
+      }
+      
+      res.send(`
+        <html>
+          <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+            <h1 style="color: #27ae60;">Successfully Unsubscribed</h1>
+            <p>You have been unsubscribed from this mailing list.</p>
+            <p style="color: #7f8c8d; font-size: 14px;">Email: ${updated.email}</p>
+          </body>
+          </html>
+      `);
+    } catch (error) {
+      console.error("Error in unsubscribe:", error);
+      res.status(500).send(`
+        <html>
+          <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+            <h1 style="color: #e74c3c;">Error</h1>
+            <p>An error occurred while processing your unsubscribe request.</p>
+          </body>
+        </html>
+      `);
+    }
+  });
+  
+  // View email in browser (web version)
+  app.get("/api/public/view/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      
+      // Decode and validate HMAC-signed token
+      const { EmailTrackingService } = await import("./emailService");
+      const decoded = EmailTrackingService.decodeWebVersionToken(token);
+      
+      if (!decoded) {
+        return res.status(400).send(`
+          <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; text-align: center;">
+              <h1 style="color: #e74c3c;">Invalid Link</h1>
+              <p>This web version link is invalid or has expired.</p>
+            </body>
+          </html>
+        `);
+      }
+      
+      const { campaignId, subscriberId, userId } = decoded;
+      
+      // Fetch campaign with template
+      const [campaign] = await db
+        .select()
+        .from(campaigns)
+        .where(and(
+          eq(campaigns.id, campaignId),
+          eq(campaigns.userId, userId)
+        ));
+      
+      if (!campaign) {
+        return res.status(404).send("<h1>Campaign not found</h1>");
+      }
+      
+      // Fetch template
+      const [template] = await db
+        .select()
+        .from(emailTemplates)
+        .where(and(
+          eq(emailTemplates.id, campaign.templateId),
+          eq(emailTemplates.userId, userId)
+        ));
+      
+      if (!template) {
+        return res.status(404).send("<h1>Email template not found</h1>");
+      }
+      
+      // Fetch subscriber for personalization
+      const [subscriber] = await db
+        .select()
+        .from(subscribers)
+        .where(and(
+          eq(subscribers.id, subscriberId),
+          eq(subscribers.userId, userId)
+        ));
+      
+      // Replace merge tags
+      let htmlContent = template.htmlContent;
+      
+      if (subscriber) {
+        htmlContent = htmlContent
+          .replace(/\{\{first_name\}\}/g, subscriber.firstName || '')
+          .replace(/\{\{last_name\}\}/g, subscriber.lastName || '')
+          .replace(/\{\{email\}\}/g, subscriber.email || '');
+      }
+      
+      // Generate unsubscribe URL with HMAC token
+      const trackingService = new EmailTrackingService(`${req.protocol}://${req.get('host')}`);
+      const unsubToken = trackingService['generateUnsubscribeToken'](subscriberId);
+      const unsubscribeUrl = `${req.protocol}://${req.get('host')}/api/public/unsubscribe/${unsubToken}`;
+      
+      htmlContent = htmlContent
+        .replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl)
+        .replace(/\{\{campaign_name\}\}/g, campaign.name || '');
+      
+      // Add web version banner at the top
+      const banner = `
+        <div style="background: #f8f9fa; padding: 10px; text-align: center; font-family: Arial, sans-serif; font-size: 12px; color: #6c757d; border-bottom: 1px solid #dee2e6;">
+          📧 Viewing web version of "${template.name}"
+        </div>
+      `;
+      
+      res.send(banner + htmlContent);
+    } catch (error) {
+      console.error("Error in web version:", error);
+      res.status(500).send("<h1>Error loading email</h1>");
     }
   });
 

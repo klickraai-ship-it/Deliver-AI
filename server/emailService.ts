@@ -51,9 +51,13 @@ export class EmailTrackingService {
     return { html: wrappedHtml, links };
   }
 
-  injectUnsubscribeLink(htmlContent: string, subscriberId: string): string {
-    const unsubscribeToken = this.generateUnsubscribeToken(subscriberId);
-    const unsubscribeUrl = `${this.trackingDomain}/unsubscribe/${unsubscribeToken}`;
+  injectUnsubscribeLink(htmlContent: string, subscriberId: string, userId?: string): string {
+    // Always use HMAC-signed token with userId for security
+    const unsubscribeToken = this.generateUnsubscribeToken(subscriberId, userId);
+    const unsubscribeUrl = `${this.trackingDomain}/api/public/unsubscribe/${unsubscribeToken}`;
+    
+    // Replace merge tag if present
+    htmlContent = htmlContent.replace(/\{\{unsubscribe_url\}\}/g, unsubscribeUrl);
     
     const unsubscribeHtml = `
       <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0; text-align: center; font-size: 12px; color: #666;">
@@ -68,13 +72,20 @@ export class EmailTrackingService {
     return htmlContent + unsubscribeHtml;
   }
 
-  processEmailForTracking(content: EmailContent, options: EmailTrackingOptions): EmailContent {
+  processEmailForTracking(content: EmailContent, options: EmailTrackingOptions & { userId?: string }): EmailContent {
     let processedHtml = content.htmlContent;
+
+    // Replace web version URL placeholder with HMAC-signed token
+    if (options.userId) {
+      const webVersionToken = this.generateWebVersionToken(options.campaignId, options.subscriberId, options.userId);
+      const webVersionUrl = `${this.trackingDomain}/api/public/view/${webVersionToken}`;
+      processedHtml = processedHtml.replace(/\{\{web_version_url\}\}/g, webVersionUrl);
+    }
 
     const { html: wrappedHtml } = this.wrapLinksWithTracking(processedHtml, options);
     processedHtml = wrappedHtml;
 
-    processedHtml = this.injectUnsubscribeLink(processedHtml, options.subscriberId);
+    processedHtml = this.injectUnsubscribeLink(processedHtml, options.subscriberId, options.userId);
 
     const trackingPixel = this.generateTrackingPixel(options);
     
@@ -124,9 +135,22 @@ export class EmailTrackingService {
     return Buffer.from(tokenData).toString('base64url');
   }
 
-  private generateUnsubscribeToken(subscriberId: string): string {
+  private generateUnsubscribeToken(subscriberId: string, userId?: string): string {
     const expiresAt = Date.now() + (365 * 24 * 60 * 60 * 1000); // 1 year
-    const data = `${subscriberId}:${expiresAt}`;
+    const data = userId 
+      ? `${subscriberId}:${userId}:${expiresAt}`
+      : `${subscriberId}:${expiresAt}`;
+    const hmac = crypto.createHmac('sha256', TRACKING_SECRET);
+    hmac.update(data);
+    const signature = hmac.digest('hex');
+    
+    const tokenData = `${data}:${signature}`;
+    return Buffer.from(tokenData).toString('base64url');
+  }
+
+  private generateWebVersionToken(campaignId: string, subscriberId: string, userId: string): string {
+    const expiresAt = Date.now() + (365 * 24 * 60 * 60 * 1000); // 1 year
+    const data = `${campaignId}:${subscriberId}:${userId}:${expiresAt}`;
     const hmac = crypto.createHmac('sha256', TRACKING_SECRET);
     hmac.update(data);
     const signature = hmac.digest('hex');
@@ -216,33 +240,95 @@ export class EmailTrackingService {
     }
   }
 
-  static decodeUnsubscribeToken(token: string): string | null {
+  static decodeUnsubscribeToken(token: string): { subscriberId: string; userId?: string } | null {
     try {
       const decoded = Buffer.from(token, 'base64url').toString('utf-8');
       const parts = decoded.split(':');
-      if (parts.length !== 3) return null;
       
-      const [subscriberId, expiresAtStr, signature] = parts;
+      // Support both formats: old (subscriberId:expiry:sig) and new (subscriberId:userId:expiry:sig)
+      if (parts.length === 3) {
+        // Old format without userId
+        const [subscriberId, expiresAtStr, signature] = parts;
+        
+        const data = `${subscriberId}:${expiresAtStr}`;
+        const hmac = crypto.createHmac('sha256', TRACKING_SECRET);
+        hmac.update(data);
+        const expectedSignature = hmac.digest('hex');
+        
+        if (signature !== expectedSignature) {
+          console.error('Invalid unsubscribe token signature');
+          return null;
+        }
+        
+        const expiresAt = parseInt(expiresAtStr, 10);
+        if (Date.now() > expiresAt) {
+          console.error('Unsubscribe token expired');
+          return null;
+        }
+        
+        return { subscriberId };
+      } else if (parts.length === 4) {
+        // New format with userId
+        const [subscriberId, userId, expiresAtStr, signature] = parts;
+        
+        const data = `${subscriberId}:${userId}:${expiresAtStr}`;
+        const hmac = crypto.createHmac('sha256', TRACKING_SECRET);
+        hmac.update(data);
+        const expectedSignature = hmac.digest('hex');
+        
+        if (signature !== expectedSignature) {
+          console.error('Invalid unsubscribe token signature');
+          return null;
+        }
+        
+        const expiresAt = parseInt(expiresAtStr, 10);
+        if (Date.now() > expiresAt) {
+          console.error('Unsubscribe token expired');
+          return null;
+        }
+        
+        return { subscriberId, userId };
+      }
       
-      const data = `${subscriberId}:${expiresAtStr}`;
+      console.error(`Invalid unsubscribe token format: expected 3 or 4 parts, got ${parts.length}`);
+      return null;
+    } catch (error) {
+      console.error('Error decoding unsubscribe token:', error);
+      return null;
+    }
+  }
+
+  static decodeWebVersionToken(token: string): { campaignId: string; subscriberId: string; userId: string } | null {
+    try {
+      const decoded = Buffer.from(token, 'base64url').toString('utf-8');
+      const parts = decoded.split(':');
+      if (parts.length !== 5) {
+        console.error(`Invalid web version token format: expected 5 parts, got ${parts.length}`);
+        return null;
+      }
+      
+      const [campaignId, subscriberId, userId, expiresAtStr, signature] = parts;
+      
+      const data = `${campaignId}:${subscriberId}:${userId}:${expiresAtStr}`;
       const hmac = crypto.createHmac('sha256', TRACKING_SECRET);
       hmac.update(data);
       const expectedSignature = hmac.digest('hex');
       
       if (signature !== expectedSignature) {
-        console.error('Invalid unsubscribe token signature');
+        console.error('Invalid web version token signature');
         return null;
       }
       
       const expiresAt = parseInt(expiresAtStr, 10);
       if (Date.now() > expiresAt) {
-        console.error('Unsubscribe token expired');
+        console.error('Web version token expired');
         return null;
       }
       
-      return subscriberId || null;
+      if (!campaignId || !subscriberId || !userId) return null;
+      return { campaignId, subscriberId, userId };
     } catch (error) {
-      console.error('Error decoding unsubscribe token:', error);
+      console.error('Error decoding web version token:', error);
       return null;
     }
   }
