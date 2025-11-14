@@ -303,11 +303,12 @@ export const campaigns = pgTable("campaigns", {
   userIdIdx: index("campaigns_user_id_idx").on(table.userId),
   templateIdIdx: index("campaigns_template_id_idx").on(table.templateId),
   uniqueIdUserId: unique("campaigns_id_user_id_unique").on(table.id, table.userId),
-  // Composite FK to enforce same-tenant template (SET NULL on template delete)
-  templateUserFk: foreignKey({
-    columns: [table.templateId, table.userId],
-    foreignColumns: [emailTemplates.id, emailTemplates.userId],
-    name: "campaigns_template_user_fk"
+  // Simple FK on template_id with SET NULL on template delete
+  // Note: Multi-tenant isolation enforced at application level via route userId checks
+  templateFk: foreignKey({
+    columns: [table.templateId],
+    foreignColumns: [emailTemplates.id],
+    name: "campaigns_template_fk"
   }).onDelete('set null'),
   // Basic userId FK for user deletion cascade
   userFk: foreignKey({
