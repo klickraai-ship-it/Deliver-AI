@@ -684,7 +684,7 @@ export type PaymentProvider = typeof paymentProviders.$inferSelect;
 // Payment Transactions table (Audit trail for all payments)
 export const paymentTransactions = pgTable("payment_transactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: 'cascade' }), // Nullable - can be set after payment
   provider: text("provider").notNull(), // 'razorpay' or 'paypal'
   transactionId: text("transaction_id").notNull().unique(), // Gateway transaction ID - UNIQUE constraint
   amount: integer("amount").notNull(), // Amount in cents (6500 = $65.00)
@@ -694,7 +694,6 @@ export const paymentTransactions = pgTable("payment_transactions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
-  userIdIdx: index("payment_transactions_user_id_idx").on(table.userId),
   transactionIdIdx: index("payment_transactions_transaction_id_idx").on(table.transactionId),
   userStatusIdx: index("payment_transactions_user_status_idx").on(table.userId, table.status),
 }));

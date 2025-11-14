@@ -9,6 +9,7 @@ import CampaignsList from './components/CampaignsList';
 import SettingsPage from './components/SettingsPage';
 import AdminDashboard from './components/AdminDashboard';
 import LoginPage from './components/LoginPage';
+import LandingPage from './components/LandingPage';
 import { api } from './client/src/lib/api';
 
 // Mock data generation
@@ -45,6 +46,7 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showLanding, setShowLanding] = useState(true);
 
   useEffect(() => {
     checkAuth();
@@ -174,7 +176,11 @@ const App: React.FC = () => {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage onLogin={handleLogin} />;
+    // Check URL to determine if showing landing or login
+    if (window.location.pathname === '/login' || window.location.hash === '#/login' || !showLanding) {
+      return <LoginPage onLogin={handleLogin} />;
+    }
+    return <LandingPage />;
   }
 
   const handleNavigate = (page: PageType) => {

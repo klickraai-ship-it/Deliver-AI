@@ -44,6 +44,7 @@ import { subscribeRateLimiter, unsubscribeRateLimiter, publicEndpointLimiter } f
 import { emailService } from "./emailProvider";
 import { encryptObject, decryptObject } from "./encryption";
 import { sanitizeEmailHtml, sanitizeEmailText, sanitizeSubject } from "./sanitizer";
+import { PaymentService } from "./paymentService";
 
 // Placeholder for notificationService to satisfy the type checker
 const notificationService = {
@@ -787,6 +788,309 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========== PUBLIC PAYMENT API ENDPOINTS ==========
+
+  // Get payment configuration (public)
+  app.get("/api/payment/config", publicEndpointLimiter, async (req, res) => {
+    try {
+      // Get active payment providers
+      const providers = await db
+        .select({
+          provider: paymentProviders.provider,
+          isActive: paymentProviders.isActive,
+        })
+        .from(paymentProviders)
+        .where(eq(paymentProviders.isActive, true));
+
+      res.json({
+        providers: providers.map(p => p.provider),
+        pricing: {
+          amount: 65,
+          currency: 'USD',
+        },
+        demoMode: {
+          enabled: true,
+          durationMinutes: 10,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching payment config:", error);
+      res.status(500).json({ message: "Failed to fetch payment configuration" });
+    }
+  });
+
+  // Create payment order (public)
+  app.post("/api/payment/create-order", publicEndpointLimiter, async (req, res) => {
+    try {
+      const { provider, email } = req.body;
+
+      if (!provider || !email) {
+        return res.status(400).json({ message: "Provider and email are required" });
+      }
+
+      if (provider !== 'razorpay' && provider !== 'paypal') {
+        return res.status(400).json({ message: "Invalid provider" });
+      }
+
+      // Normalize email
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Check if user already exists
+      const [existingUser] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, normalizedEmail))
+        .limit(1);
+
+      if (existingUser && existingUser.paymentStatus === 'paid') {
+        return res.status(400).json({ message: "User already has an active paid account" });
+      }
+
+      // Create order
+      const order = await PaymentService.createOrder(provider, 65, 'USD', normalizedEmail);
+
+      res.json(order);
+    } catch (error: any) {
+      console.error("Error creating payment order:", error);
+      res.status(500).json({ message: error.message || "Failed to create payment order" });
+    }
+  });
+
+  // Verify payment and create user (public)
+  app.post("/api/payment/verify", publicEndpointLimiter, async (req, res) => {
+    try {
+      const { provider, email, password, name, companyName, ...paymentData } = req.body;
+
+      if (!provider || !email || !password || !name) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      // Normalize email
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Verify payment signature
+      const isValid = await PaymentService.verifyPayment(provider, paymentData);
+
+      if (!isValid) {
+        return res.status(400).json({ message: "Payment verification failed" });
+      }
+
+      // Check if user already exists
+      const [existingUser] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, normalizedEmail))
+        .limit(1);
+
+      let user;
+      if (existingUser) {
+        // Update existing user to paid status
+        [user] = await db
+          .update(users)
+          .set({
+            paymentStatus: 'paid',
+            paidAt: new Date(),
+            paymentProvider: provider,
+            paymentId: paymentData.orderId || paymentData.paymentId,
+          })
+          .where(eq(users.id, existingUser.id))
+          .returning();
+      } else {
+        // Create new user
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        [user] = await db
+          .insert(users)
+          .values({
+            name,
+            email: normalizedEmail,
+            passwordHash: hashedPassword,
+            companyName: companyName || null,
+            role: 'user',
+            paymentStatus: 'paid',
+            paidAt: new Date(),
+            paymentProvider: provider,
+            paymentId: paymentData.orderId || paymentData.paymentId,
+            isVerified: true,
+          })
+          .returning();
+      }
+
+      // Update payment transaction
+      await db
+        .update(paymentTransactions)
+        .set({
+          userId: user.id,
+          status: 'captured',
+        })
+        .where(eq(paymentTransactions.transactionId, paymentData.orderId || paymentData.paymentId));
+
+      // Create session
+      const sessionToken = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+      await db.insert(sessions).values({
+        userId: user.id,
+        token: sessionToken,
+        expiresAt,
+      });
+
+      res.json({
+        sessionToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          paymentStatus: user.paymentStatus,
+        },
+      });
+    } catch (error: any) {
+      console.error("Error verifying payment:", error);
+      res.status(500).json({ message: error.message || "Failed to verify payment" });
+    }
+  });
+
+  // Start demo mode (public)
+  app.post("/api/payment/demo", publicEndpointLimiter, async (req, res) => {
+    try {
+      const { email, password, name, companyName } = req.body;
+
+      if (!email || !password || !name) {
+        return res.status(400).json({ message: "Email, password, and name are required" });
+      }
+
+      // Normalize email
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Check if user already exists
+      const [existingUser] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, normalizedEmail))
+        .limit(1);
+
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
+
+      // Create demo user
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      const [user] = await db
+        .insert(users)
+        .values({
+          name,
+          email: normalizedEmail,
+          passwordHash: hashedPassword,
+          companyName: companyName || null,
+          role: 'user',
+          paymentStatus: 'demo',
+          demoStartedAt: new Date(),
+          isVerified: true,
+        })
+        .returning();
+
+      // Create session
+      const sessionToken = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+
+      await db.insert(sessions).values({
+        userId: user.id,
+        token: sessionToken,
+        expiresAt,
+      });
+
+      res.json({
+        sessionToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          paymentStatus: user.paymentStatus,
+          demoStartedAt: user.demoStartedAt,
+        },
+        demoExpiresAt: new Date(user.demoStartedAt!.getTime() + 10 * 60 * 1000), // 10 minutes
+      });
+    } catch (error: any) {
+      console.error("Error creating demo user:", error);
+      res.status(500).json({ message: error.message || "Failed to create demo account" });
+    }
+  });
+
+  // Razorpay webhook
+  app.post("/api/webhooks/razorpay", async (req, res) => {
+    try {
+      const event = await PaymentService.processWebhook('razorpay', req.headers, req.body);
+
+      if (!event) {
+        return res.status(401).json({ message: "Invalid signature" });
+      }
+
+      // If payment is captured, try to find and update user
+      if (event.status === 'captured') {
+        const [transaction] = await db
+          .select()
+          .from(paymentTransactions)
+          .where(eq(paymentTransactions.transactionId, event.transactionId))
+          .limit(1);
+
+        if (transaction && transaction.userId) {
+          await db
+            .update(users)
+            .set({
+              paymentStatus: 'paid',
+              paidAt: new Date(),
+            })
+            .where(eq(users.id, transaction.userId));
+        }
+      }
+
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error("Razorpay webhook error:", error);
+      // Always return 200 to prevent retries
+      res.status(200).json({ received: true });
+    }
+  });
+
+  // PayPal webhook
+  app.post("/api/webhooks/paypal", async (req, res) => {
+    try {
+      const event = await PaymentService.processWebhook('paypal', req.headers, req.body);
+
+      if (!event) {
+        return res.status(401).json({ message: "Invalid signature" });
+      }
+
+      // If payment is captured, try to find and update user
+      if (event.status === 'captured') {
+        const [transaction] = await db
+          .select()
+          .from(paymentTransactions)
+          .where(eq(paymentTransactions.transactionId, event.transactionId))
+          .limit(1);
+
+        if (transaction && transaction.userId) {
+          await db
+            .update(users)
+            .set({
+              paymentStatus: 'paid',
+              paidAt: new Date(),
+            })
+            .where(eq(users.id, transaction.userId));
+        }
+      }
+
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error("PayPal webhook error:", error);
+      // Always return 200 to prevent retries
+      res.status(200).json({ received: true });
+    }
+  });
+
   // ========== SUBSCRIBERS API ==========
 
   // Get all subscribers
@@ -1360,7 +1664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Notifications endpoints
   app.get('/api/notifications', requireAuth, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = (req as any).userId;
       console.log(`[Notifications] Fetching for user: ${userId}`);
       const notifications = await notificationService.getUserNotifications(userId);
       console.log(`[Notifications] Found ${notifications.length} notification(s)`);
