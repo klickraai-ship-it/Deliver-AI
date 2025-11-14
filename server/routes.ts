@@ -1174,6 +1174,146 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ========== EMAIL PROVIDER INTEGRATIONS API ==========
+  // NOTE: These specific routes MUST be defined BEFORE the generic /api/settings/:key route
+  // to prevent the wildcard from matching "email-provider" as a key parameter.
+
+  // Get user's email provider integration
+  app.get("/api/settings/email-provider", requireAuth, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { emailProviderIntegrations } = await import('./db');
+
+      const [integration] = await db
+        .select()
+        .from(emailProviderIntegrations)
+        .where(eq(emailProviderIntegrations.userId, userId));
+
+      if (!integration) {
+        return res.json({ 
+          provider: null, 
+          isActive: false, 
+          config: {},
+          requiresConfiguration: true,
+          message: "Email provider not configured. Please configure AWS SES to send emails."
+        });
+      }
+
+      const config = integration.config as any;
+      const decryptedConfig = decryptObject(config);
+
+      const safeConfig = {
+        ...decryptedConfig,
+        awsSecretAccessKey: decryptedConfig.awsSecretAccessKey ? '***HIDDEN***' : undefined,
+        apiKey: decryptedConfig.apiKey ? '***HIDDEN***' : undefined,
+        sendgridApiKey: decryptedConfig.sendgridApiKey ? '***HIDDEN***' : undefined,
+        mailgunApiKey: decryptedConfig.mailgunApiKey ? '***HIDDEN***' : undefined,
+      };
+
+      res.json({
+        ...integration,
+        config: safeConfig,
+      });
+    } catch (error) {
+      console.error("Error fetching email provider integration:", error);
+      res.status(500).json({ message: "Failed to fetch integration" });
+    }
+  });
+
+  // Create or update email provider integration
+  app.post("/api/settings/email-provider", requireAuth, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { provider, isActive, config } = req.body;
+      const { emailProviderIntegrations, insertEmailProviderIntegrationSchema } = await import('./db');
+
+      if (provider && provider !== 'ses') {
+        const providerName = String(provider).toUpperCase();
+        return res.status(400).json({
+          message: `${providerName} provider is not supported for per-user credentials. Only AWS SES is currently supported for multi-tenant email integration.`,
+          supportedProviders: ['ses'],
+          requestedProvider: provider,
+          reason: provider === 'resend' 
+            ? "Per-user Resend client instantiation not implemented" 
+            : `${providerName} integration not implemented`
+        });
+      }
+
+      const validatedData = insertEmailProviderIntegrationSchema.parse({
+        provider,
+        isActive,
+        config,
+      });
+
+      const [existing] = await db
+        .select()
+        .from(emailProviderIntegrations)
+        .where(eq(emailProviderIntegrations.userId, userId));
+
+      if (existing) {
+        const existingConfig = existing.config as any || {};
+        const newConfig = validatedData.config as any || {};
+
+        const decryptedExisting = decryptObject(existingConfig);
+
+        const mergedConfig = {
+          awsAccessKeyId: newConfig.awsAccessKeyId || decryptedExisting.awsAccessKeyId,
+          awsSecretAccessKey: newConfig.awsSecretAccessKey || decryptedExisting.awsSecretAccessKey,
+          awsRegion: newConfig.awsRegion || decryptedExisting.awsRegion,
+        };
+
+        const encryptedConfig = encryptObject(mergedConfig);
+
+        const [updated] = await db
+          .update(emailProviderIntegrations)
+          .set({
+            provider: validatedData.provider,
+            isActive: validatedData.isActive,
+            config: encryptedConfig as any,
+            updatedAt: new Date(),
+          })
+          .where(eq(emailProviderIntegrations.userId, userId))
+          .returning();
+
+        res.json({ message: "Integration updated successfully", integration: updated });
+      } else {
+        const encryptedConfig = encryptObject(validatedData.config as any);
+
+        const [created] = await db
+          .insert(emailProviderIntegrations)
+          .values({
+            userId,
+            provider: validatedData.provider,
+            isActive: validatedData.isActive,
+            config: encryptedConfig as any,
+          })
+          .returning();
+
+        res.json({ message: "Integration created successfully", integration: created });
+      }
+    } catch (error) {
+      console.error("Error saving email provider integration:", error);
+      res.status(500).json({ message: "Failed to save integration" });
+    }
+  });
+
+  // Delete email provider integration
+  app.delete("/api/settings/email-provider", requireAuth, async (req, res) => {
+    try {
+      const userId = (req as any).userId;
+      const { emailProviderIntegrations } = await import('./db');
+
+      await db
+        .delete(emailProviderIntegrations)
+        .where(eq(emailProviderIntegrations.userId, userId));
+
+      res.json({ message: "Integration deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting email provider integration:", error);
+      res.status(500).json({ message: "Failed to delete integration" });
+    }
+  });
+
   // ========== SETTINGS API ==========
 
   // Get all settings
@@ -1692,162 +1832,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error in web version:", error);
       res.status(500).send("<h1>Error loading email</h1>");
-    }
-  });
-
-  // ========== EMAIL PROVIDER INTEGRATIONS API ==========
-
-  // Get user's email provider integration
-  app.get("/api/settings/email-provider", requireAuth, async (req, res) => {
-    try {
-      const userId = (req as any).userId;
-      const { emailProviderIntegrations } = await import('./db');
-
-      const [integration] = await db
-        .select()
-        .from(emailProviderIntegrations)
-        .where(eq(emailProviderIntegrations.userId, userId));
-
-      if (!integration) {
-        // Return null provider to indicate unconfigured state (SES-only enforcement)
-        // UI should display "configure SES" message instead of showing Resend as default
-        return res.json({ 
-          provider: null, 
-          isActive: false, 
-          config: {},
-          requiresConfiguration: true,
-          message: "Email provider not configured. Please configure AWS SES to send emails."
-        });
-      }
-
-      // Decrypt credentials from database
-      const config = integration.config as any;
-      const decryptedConfig = decryptObject(config);
-
-      // Don't send sensitive credentials to frontend
-      const safeConfig = {
-        ...decryptedConfig,
-        awsSecretAccessKey: decryptedConfig.awsSecretAccessKey ? '***HIDDEN***' : undefined,
-        apiKey: decryptedConfig.apiKey ? '***HIDDEN***' : undefined,
-        sendgridApiKey: decryptedConfig.sendgridApiKey ? '***HIDDEN***' : undefined,
-        mailgunApiKey: decryptedConfig.mailgunApiKey ? '***HIDDEN***' : undefined,
-      };
-
-      res.json({
-        ...integration,
-        config: safeConfig,
-      });
-    } catch (error) {
-      console.error("Error fetching email provider integration:", error);
-      res.status(500).json({ message: "Failed to fetch integration" });
-    }
-  });
-
-  // Create or update email provider integration
-  app.post("/api/settings/email-provider", requireAuth, async (req, res) => {
-    try {
-      const userId = (req as any).userId;
-      const { provider, isActive, config } = req.body;
-      const { emailProviderIntegrations, insertEmailProviderIntegrationSchema } = await import('./db');
-
-      // RUNTIME VALIDATION: ONLY AWS SES is supported for per-user credentials
-      // Check before Zod validation to provide friendlier error message
-      // Reject ALL non-SES providers regardless of config payload to prevent:
-      // 1. Creating integrations that will fail during email sending
-      // 2. Activating legacy/unsupported integrations
-      // 3. User confusion about supported providers
-      if (provider && provider !== 'ses') {
-        const providerName = String(provider).toUpperCase();
-        return res.status(400).json({
-          message: `${providerName} provider is not supported for per-user credentials. Only AWS SES is currently supported for multi-tenant email integration.`,
-          supportedProviders: ['ses'],
-          requestedProvider: provider,
-          reason: provider === 'resend' 
-            ? "Per-user Resend client instantiation not implemented" 
-            : `${providerName} integration not implemented`
-        });
-      }
-
-      // Validate input (this will also enforce 'ses' via Zod schema)
-      const validatedData = insertEmailProviderIntegrationSchema.parse({
-        provider,
-        isActive,
-        config,
-      });
-
-      // Check if integration already exists
-      const [existing] = await db
-        .select()
-        .from(emailProviderIntegrations)
-        .where(eq(emailProviderIntegrations.userId, userId));
-
-      if (existing) {
-        // Update existing integration
-        // Merge configs to preserve existing credentials if not provided in the update
-        const existingConfig = existing.config as any || {};
-        const newConfig = validatedData.config as any || {};
-
-        // Decrypt existing config to merge with new values
-        const decryptedExisting = decryptObject(existingConfig);
-
-        const mergedConfig = {
-          awsAccessKeyId: newConfig.awsAccessKeyId || decryptedExisting.awsAccessKeyId,
-          awsSecretAccessKey: newConfig.awsSecretAccessKey || decryptedExisting.awsSecretAccessKey,
-          awsRegion: newConfig.awsRegion || decryptedExisting.awsRegion,
-        };
-
-        // Encrypt the merged config before saving
-        const encryptedConfig = encryptObject(mergedConfig);
-
-        const [updated] = await db
-          .update(emailProviderIntegrations)
-          .set({
-            provider: validatedData.provider,
-            isActive: validatedData.isActive,
-            config: encryptedConfig as any,
-            updatedAt: new Date(),
-          })
-          .where(eq(emailProviderIntegrations.userId, userId))
-          .returning();
-
-        res.json({ message: "Integration updated successfully", integration: updated });
-      } else {
-        // Create new integration
-        // Encrypt credentials before saving
-        const encryptedConfig = encryptObject(validatedData.config as any);
-
-        const [created] = await db
-          .insert(emailProviderIntegrations)
-          .values({
-            userId,
-            provider: validatedData.provider,
-            isActive: validatedData.isActive,
-            config: encryptedConfig as any,
-          })
-          .returning();
-
-        res.json({ message: "Integration created successfully", integration: created });
-      }
-    } catch (error) {
-      console.error("Error saving email provider integration:", error);
-      res.status(500).json({ message: "Failed to save integration" });
-    }
-  });
-
-  // Delete email provider integration
-  app.delete("/api/settings/email-provider", requireAuth, async (req, res) => {
-    try {
-      const userId = (req as any).userId;
-      const { emailProviderIntegrations } = await import('./db');
-
-      await db
-        .delete(emailProviderIntegrations)
-        .where(eq(emailProviderIntegrations.userId, userId));
-
-      res.json({ message: "Integration deleted successfully" });
-    } catch (error) {
-      console.error("Error deleting email provider integration:", error);
-      res.status(500).json({ message: "Failed to delete integration" });
     }
   });
 

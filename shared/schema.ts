@@ -287,6 +287,9 @@ export const campaigns = pgTable("campaigns", {
   name: text("name").notNull(),
   subject: text("subject").notNull(),
   templateId: varchar("template_id"),
+  contentType: text("content_type").notNull().default('template'),
+  customHtmlContent: text("custom_html_content"),
+  customTextContent: text("custom_text_content"),
   status: text("status").notNull().default('draft'),
   fromName: text("from_name").notNull(),
   fromEmail: text("from_email").notNull(),
@@ -318,7 +321,10 @@ export const campaigns = pgTable("campaigns", {
 export const insertCampaignSchema = z.object({
   name: z.string(),
   subject: z.string(),
+  contentType: z.enum(['template', 'custom']).default('template'),
   templateId: z.string().optional(),
+  customHtmlContent: z.string().optional(),
+  customTextContent: z.string().optional(),
   status: z.enum(['draft', 'scheduled', 'sending', 'sent', 'paused', 'failed']).default('draft'),
   fromName: z.string(),
   fromEmail: z.string().email(),
@@ -326,7 +332,22 @@ export const insertCampaignSchema = z.object({
   lists: z.array(z.string()).default([]),
   scheduledAt: z.string().optional(),
   sentAt: z.string().optional(),
-}).strict();
+}).strict().refine(
+  (data) => {
+    // When using template mode, templateId is required
+    if (data.contentType === 'template' && !data.templateId) {
+      return false;
+    }
+    // When using custom mode, customHtmlContent is required
+    if (data.contentType === 'custom' && !data.customHtmlContent) {
+      return false;
+    }
+    return true;
+  },
+  {
+    message: "Template ID is required for template mode, and custom HTML content is required for custom mode"
+  }
+);
 
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
 export type Campaign = typeof campaigns.$inferSelect;
