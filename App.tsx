@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
@@ -27,7 +27,7 @@ const generateMockData = (): DashboardData => ({
     { title: 'Complaint Rate', value: '0.08%', change: '+0.02%', changeType: 'increase', period: 'vs last 7d' },
     { title: 'Unsubscribe Rate', value: '0.15%', change: '0.00%', changeType: 'neutral', period: 'vs last 7d' },
   ],
-  gmailSpamRate: 0.12, // In the "warn" threshold
+  gmailSpamRate: 0.12,
   domainPerformance: [
     { name: 'Gmail', deliveryRate: 99.1, complaintRate: 0.12, spamRate: 0.12 },
     { name: 'Yahoo', deliveryRate: 99.5, complaintRate: 0.09, spamRate: 0.08 },
@@ -46,18 +46,17 @@ const generateMockData = (): DashboardData => ({
 
 type PageType = 'dashboard' | 'campaigns' | 'templates' | 'subscribers' | 'settings' | 'admin';
 
-const App: React.FC = () => {
-  const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true); // Initial loading state for auth check
+// Main app content wrapper that uses React Router hooks
+const AppContent: React.FC = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showLanding, setShowLanding] = useState(true);
   const [isAIOpen, setIsAIOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null); // Renamed from 'data' to 'dashboardData' for clarity
-  const [error, setError] = useState<string | null>(null); // State for handling errors
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Simulate demo mode and expiry if needed
   const isDemoMode = user?.paymentStatus === 'demo';
@@ -127,57 +126,73 @@ const App: React.FC = () => {
   };
 
   const handleNavigate = (page: PageType) => {
-    setCurrentPage(page);
-    setMobileMenuOpen(false); // Close mobile menu on navigation
+    navigate(`/${page}`);
+    setSidebarOpen(false);
   };
 
-  // Determine if the application is in demo mode based on user data
-  const isLoggedIn = isAuthenticated;
-  const currentUser = user;
+  const isDemoMode = user?.paymentStatus === 'demo';
+  const demoExpiresAt = user?.demoExpiresAt;
 
+  if (!isAuthenticated) {
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage onGetStarted={() => navigate('/login')} />} />
+        <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
+  // Get current page from location
+  const currentPage = location.pathname.replace('/', '') as PageType || 'dashboard';
+
+  return (
+    <div className="flex h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
+      <Sidebar 
+        currentPage={currentPage}
+        onNavigate={handleNavigate}
+        mobileMenuOpen={sidebarOpen}
+        onCloseMobileMenu={() => setSidebarOpen(false)}
+        isSuperAdmin={user?.role === 'super_admin'}
+      />
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} currentUser={user} />
+        <main className={`flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 ${user?.paymentStatus === 'demo' ? 'mt-10' : ''}`}>
+          {error && (
+            <div className="mb-4 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200">
+              {error}
+            </div>
+          )}
+          {loading && !dashboardData && (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand-blue"></div>
+            </div>
+          )}
+          <Routes>
+            <Route path="/dashboard" element={dashboardData ? <Dashboard data={dashboardData} /> : <div className="text-center text-gray-400 p-8">Loading dashboard...</div>} />
+            <Route path="/campaigns" element={<CampaignsList />} />
+            <Route path="/subscribers" element={<SubscribersList />} />
+            <Route path="/templates" element={<TemplatesList />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            {user?.role === 'super_admin' && (
+              <Route path="/admin" element={<AdminDashboard />} />
+            )}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </main>
+      </div>
+      <AIAssistantFab onOpen={() => setIsAIOpen(true)} />
+      <AIAssistant isOpen={isAIOpen} onClose={() => setIsAIOpen(false)} data={dashboardData} />
+      {isDemoMode && demoExpiresAt && <DemoTimer expiresAt={demoExpiresAt} onExpire={handleDemoExpire} />}
+    </div>
+  );
+};
+
+const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <Router>
-        {!isLoggedIn ? (
-          <Routes>
-            <Route path="/" element={<LandingPage onGetStarted={() => window.location.href = '/login'} />} />
-            <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        ) : (
-          <div className="flex h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
-            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} onLogout={handleLogout} currentUser={currentUser} />
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} currentUser={currentUser} />
-              <main className={`flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 ${currentUser?.paymentStatus === 'demo' ? 'mt-10' : ''}`}>
-                {error && (
-                  <div className="mb-4 p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200">
-                    {error}
-                  </div>
-                )}
-                {loading && !dashboardData && (
-                  <div className="flex items-center justify-center h-64">
-                    <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-brand-blue"></div>
-                  </div>
-                )}
-                <Routes>
-                  <Route path="/dashboard" element={dashboardData ? <Dashboard data={dashboardData} /> : <div className="text-center text-gray-400 p-8">Loading dashboard...</div>} />
-                  <Route path="/campaigns" element={<CampaignsList />} />
-                  <Route path="/subscribers" element={<SubscribersList />} />
-                  <Route path="/templates" element={<TemplatesList />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                  {currentUser?.role === 'super_admin' && (
-                    <Route path="/admin" element={<AdminDashboard />} />
-                  )}
-                  <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                </Routes>
-              </main>
-            </div>
-            <AIAssistantFab onOpen={() => setIsAIOpen(true)} />
-            <AIAssistant isOpen={isAIOpen} onClose={() => setIsAIOpen(false)} data={dashboardData} />
-            {isDemoMode && <DemoTimer expiresAt={demoExpiresAt} onExpire={handleDemoExpire} />}
-          </div>
-        )}
+        <AppContent />
       </Router>
     </ErrorBoundary>
   );
