@@ -1,26 +1,26 @@
-# Use Node.js 20 Alpine for smaller image size
+# ---- Base ----
 FROM node:20-alpine
 
-# Set working directory
+# ---- Create app directory ----
 WORKDIR /app
 
-# Copy package files
+# ---- Copy dependency manifests ----
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# ---- Install dependencies ----
+# If a lock file exists we use 'npm ci' for a reproducible build;
+# otherwise fall back to 'npm install'.
+RUN if [ -f package-lock.json ]; then \
+        npm ci --omit=dev; \
+    else \
+        npm install --omit=dev; \
+    fi
 
-# Copy source code
+# ---- Copy source code ----
 COPY . .
 
-# Build the application
-RUN npm run build
+# ---- Expose port (change if your app listens on another) ----
+EXPOSE 3000
 
-# Expose port
-EXPOSE 5000
-
-# Set environment to production
-ENV NODE_ENV=production
-
-# Run database migrations and start the server
-CMD ["npm", "run", "start"]
+# ---- Start the application ----
+CMD ["node", "index.js"]   # <-- replace 'index.js' with your actual entry file
