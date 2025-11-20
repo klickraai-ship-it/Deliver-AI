@@ -29,9 +29,4 @@ See [COOLIFY_DEPLOYMENT.md](COOLIFY_DEPLOYMENT.md) for deployment instructions.
 
 See [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) for complete configuration guide.
 
-# Deliver-AI
-# Deliver-AI
-# Deliver-AI
-# Deliver-AI
-# Deliver-AI
-# Deliver-AI
+
